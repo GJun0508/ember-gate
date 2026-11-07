@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="zh-CN" data-online="false">
+<html lang="zh-CN" data-rank-api="https://ember-gate-defense-td.junlinkun.chatgpt.site/api/leaderboard">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
@@ -402,7 +402,7 @@ const TOWERS = {
   tesla: {name:'电弧塔', tag:'连锁 · 群攻', cost:150, range:126, damage:30, rate:.87, chain:2, color:'#b9acf1', description:'闪电可连续跳到另外两个近邻，伤害逐跳衰减。'},
   mortar: {name:'裂地迫击炮',tag:'重型 · 大范围',cost:360,range:246,damage:115,rate:.49,splash:105,unlock:13,color:'#eea079',description:'超远程炮击，对大范围内的敌人造成溅射伤害。'},
   laser: {name:'棱镜激光塔',tag:'重型 · 贯穿',cost:430,range:252,damage:101,rate:.68,pierce:true,beam:24,unlock:13,color:'#f3dba7',description:'射线可贯穿一条直线上的多个敌人，无视护盾和护甲。'},
-  storm: {name:'风暴核心',tag:'重型 · 分叉电击',cost:520,range:190,damage:132,rate:1.05,chain:8,jumpRange:145,slow:1.4,unlock:19,color:'#b6b0ff',description:'雷击同时分叉并继续跳跃，一次最多击中九个敌人，附带减速。'},
+  storm: {name:'风暴核心',tag:'重型 · 分叉电击',cost:1300,upgradeBase:520,range:190,damage:132,rate:1.05,chain:8,jumpRange:145,slow:1.4,unlock:19,color:'#b6b0ff',description:'雷击同时分叉并继续跳跃，一次最多击中九个敌人，附带减速。'},
   railgun: {name:'天穹轨道炮',tag:'重型 · 穿透',cost:780,range:326,damage:350,rate:.34,pierce:true,beam:31,unlock:21,endlessUnlock:8,color:'#8adcf5',description:'超远射程，一炮贯穿一整列敌人，无视护盾和护甲。'},
   gravity: {name:'引力歼灭炮',tag:'重型 · 引力场',cost:1500,range:265,damage:300,rate:.30,splash:125,slow:3.5,fieldDuration:2.8,unlock:23,endlessUnlock:12,color:'#e3a8f2',description:'爆破后留下引力场，持续伤害并压制治疗，前 1 秒轻微回拉敌人。无尽模式最多建造两座。'},
   sunlance: {name:'裂日激光塔',tag:'重型 · 粗激光',cost:1150,range:285,damage:900,rate:.20,pierce:true,beam:52,unlock:22,endlessUnlock:10,color:'#ff985c',description:'基础每 5 秒发射一道粗激光，主目标受到 900 点伤害，光束内其他敌人受到 720 点伤害。无视护甲和护盾。'},
@@ -724,7 +724,8 @@ class Game {
   upgradeCost(index,track){
     const tower=this.towers[index];
     if(!tower||(track!=='damage'&&track!=='speed')||tower[track]>=MAX_UPGRADE_LEVEL)return null;
-    const level=tower[track],base=TOWERS[tower.type].cost;
+    const spec=TOWERS[tower.type];
+    const level=tower[track],base=spec.upgradeBase??spec.cost;
     return Math.round((base*.53+level*19+base*.25*Math.max(0,level-2)**2)/5)*5;
   }
 
@@ -2106,7 +2107,7 @@ function isNonnegative(value){
 function validTower(tower,olderSave){
   if(tower===null)return true;
   if(!tower)return false;
-  const minimum=olderSave&&tower.type==='venom'?105:tower.type==='gravity'?930:
+  const minimum=olderSave&&tower.type==='venom'?105:tower.type==='gravity'?930:tower.type==='storm'?520:
     Object.hasOwn(TOWERS,tower.type)?TOWERS[tower.type].cost:null;
   const maxLevel=olderSave?3:MAX_UPGRADE_LEVEL;
   return minimum!==null&&isInteger(tower.damage,0,maxLevel)&&isInteger(tower.speed,0,maxLevel)&&
@@ -2331,15 +2332,15 @@ function setupLeaderboard(records,storage){
   const list=byId('rank-entries');
   const listStatus=byId('rank-list-status');
   const result=byId('rank-submit-status');
-  const online=document.documentElement.dataset.online==='true';
+  const rankApi=document.documentElement.dataset.rankApi;
   const profileKey='ember-gate-defense-td:rank-profile';
   let mode='campaign',loadId=0,sending=false,profile={},archive;
   try{profile=JSON.parse(storage?.getItem(profileKey)??'null')??{};}catch{}
   if(typeof profile!=='object')profile={};
   nickname.value=normalizeRankName(profile.nickname)??'';
-  form.hidden=!online;
+  const offlineNote=byId('rank-offline-note');
+  form.hidden=false;
   byId('rank-online-note').hidden=false;
-  byId('rank-offline-note').hidden=online;
 
   function saveProfile(){
     try{storage?.setItem(profileKey,JSON.stringify(profile));}catch{}
@@ -2349,51 +2350,58 @@ function setupLeaderboard(records,storage){
     const score=records.get(mode);
     const eligible=hasScore(score)&&validRankScore(mode,score.waves,score.kills,score.timeMs);
     byId('rank-personal').textContent=mode!=='endless'
-      ?eligible?`已完成 ${score.waves} / ${rankWaveCount(mode)} 波${score.timeMs!=null?` · ${formatRunTime(score.timeMs)}`:''}`:online?'完成一波后可提交成绩':'完成一波后开始记录'
+      ?eligible?`已完成 ${score.waves} / ${rankWaveCount(mode)} 波${score.timeMs!=null?` · ${formatRunTime(score.timeMs)}`:''}`:'完成一波后可提交成绩'
       :hasScore(score)?`通关 ${score.waves} 波 · 击杀 ${score.kills} 名`:'完成一波或击杀敌人后开始记录';
     submit.disabled=sending||!eligible;
   }
 
   async function refreshList(){
     const id=++loadId;
+    const selectedMode=mode;
     list.replaceChildren();
+    offlineNote.hidden=true;
     listStatus.textContent='正在加载排行榜…';
+    let entries,historical=false;
     try{
-      let entries;
-      if(online){
-        const response=await fetch('/api/leaderboard?mode='+mode,{
-          cache:'no-store',signal:AbortSignal.timeout?.(8000),
-        });
-        if(!response.ok)throw new Error();
-        ({entries}=await response.json());
-      }else{
-        const selectedMode=mode;
+      const response=await fetch(rankApi+'?mode='+selectedMode,{
+        cache:'no-store',signal:AbortSignal.timeout?.(8000),
+      });
+      if(!response.ok)throw new Error();
+      ({entries}=await response.json());
+      if(!Array.isArray(entries))throw new Error();
+    }catch{
+      if(id!==loadId)return;
+      try{
         archive??=fetch('./assets/legacy-leaderboard.json').then(response=>{
           if(!response.ok)throw new Error();
           return response.json();
         }).catch(error=>{archive=null;throw error;});
         const snapshot=await archive;
         entries=snapshot.boards[selectedMode];
-        if(id===loadId)byId('rank-offline-note').textContent=
-          '旧站历史成绩 · 收录于 '+snapshot.capturedOn+' · 本机个人最佳单独记录';
+        if(!Array.isArray(entries))throw new Error();
+        if(id!==loadId)return;
+        historical=true;
+        offlineNote.textContent='实时榜暂不可用 · 当前显示 '+snapshot.capturedOn+' 的历史成绩';
+        offlineNote.hidden=false;
+      }catch{
+        if(id===loadId)listStatus.textContent='暂时无法加载排行榜，请重新打开后重试。';
+        return;
       }
-      if(id!==loadId)return;
-      entries.forEach(({nickname,waves,kills,timeMs,rank},index)=>{
-        const row=document.createElement('tr');
-        const values=[String(rank??index+1),nickname,String(waves)];
-        if(mode!=='endless')values.push(timeMs==null?'—':formatRunTime(timeMs));
-        values.push(String(kills));
-        for(const text of values){
-          const cell=document.createElement('td');
-          cell.textContent=text;
-          row.append(cell);
-        }
-        list.append(row);
-      });
-      listStatus.textContent=entries.length?'':online?'榜单还没有成绩，等你来上榜。':'旧站榜单暂无公开成绩。';
-    }catch{
-      if(id===loadId)listStatus.textContent='暂时无法加载排行榜，请重新打开后重试。';
     }
+    if(id!==loadId)return;
+    entries.forEach(({nickname,waves,kills,timeMs,rank},index)=>{
+      const row=document.createElement('tr');
+      const values=[String(rank??index+1),nickname,String(waves)];
+      if(selectedMode!=='endless')values.push(timeMs==null?'—':formatRunTime(timeMs));
+      values.push(String(kills));
+      for(const text of values){
+        const cell=document.createElement('td');
+        cell.textContent=text;
+        row.append(cell);
+      }
+      list.append(row);
+    });
+    listStatus.textContent=entries.length?'':historical?'历史榜单暂无公开成绩。':'榜单还没有成绩，等你来上榜。';
   }
 
   function showMode(nextMode){
@@ -2412,7 +2420,7 @@ function setupLeaderboard(records,storage){
   dialog.addEventListener('close',()=>{loadId++;});
   form.addEventListener('submit',async event=>{
     event.preventDefault();
-    if(sending||!online)return;
+    if(sending)return;
     const name=normalizeRankName(nickname.value);
     if(!name){
       result.textContent='请输入 2–20 个字的昵称，可用文字、数字、空格、连字符和下划线。';
@@ -2430,13 +2438,16 @@ function setupLeaderboard(records,storage){
         profile.token=Array.from(crypto.getRandomValues(new Uint8Array(32)),byte=>byte.toString(16).padStart(2,'0')).join('');
         saveProfile();
       }
-      const response=await fetch('/api/leaderboard',{
+      const response=await fetch(rankApi,{
         method:'POST',headers:{'content-type':'application/json'},
+        credentials:'omit',
         body:JSON.stringify({...score,mode:submittedMode,nickname:name,token:profile.token}),
         signal:AbortSignal.timeout?.(8000),
       });
       const data=await response.json();
-      if(!response.ok)throw new Error(data.error||'提交失败，请稍后重试。');
+      if(!response.ok||!Number.isInteger(data.rank)){
+        throw new Error(data.error||'提交失败，请稍后重试。');
+      }
       profile.nickname=name;
       saveProfile();
       if(mode===submittedMode&&dialog.open){
@@ -2445,7 +2456,7 @@ function setupLeaderboard(records,storage){
       }
     }catch(error){
       if(mode===submittedMode&&dialog.open){
-        result.textContent=error.name==='Error'&&error.message?error.message:'提交失败，请稍后重试。';
+        result.textContent=error.name==='Error'&&error.message?error.message:'暂时无法连接排行榜，本机最佳纪录已保留。';
       }
     }finally{
       sending=false;
