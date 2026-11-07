@@ -559,6 +559,20 @@ function pointAt(distance,routeIndex=0,routes=ROUTES){
   return {x,y,angle:0};
 }
 
+function nearestChainTargets(enemies,from,struck,range,limit){
+  const nearest=[];
+  for(const enemy of enemies){
+    if(enemy.hp<=0||struck.has(enemy))continue;
+    const distance=Math.hypot(enemy.x-from.x,enemy.y-from.y);
+    if(distance>=range||(nearest.length===limit&&distance>=nearest[limit-1].distance))continue;
+    let index=nearest.length;
+    while(index>0&&distance<nearest[index-1].distance)index--;
+    nearest.splice(index,0,{enemy,distance});
+    if(nearest.length>limit)nearest.pop();
+  }
+  return nearest;
+}
+
 class Game {
   constructor(mode='campaign'){this.mode=mode;this.reset();}
 
@@ -927,17 +941,16 @@ class Game {
         this.effects.push({kind:tower.type,x,y,tx:x+dx*stats.range,ty:y+dy*stats.range,color:stats.color,ttl:duration,max:duration});
       }
       if(stats.chain){
+        const storm=tower.type==='storm';
         const struck=new Set([target]);
         const forks=[{enemy:target,depth:0}];
-        while(forks.length&&struck.size<=stats.chain){
-          const {enemy:from,depth}=forks.shift();
-          const nearby=this.enemies.filter(enemy=>enemy.hp>0&&!struck.has(enemy)&&
-            Math.hypot(enemy.x-from.x,enemy.y-from.y)<(stats.jumpRange??81))
-            .sort((a,b)=>Math.hypot(a.x-from.x,a.y-from.y)-Math.hypot(b.x-from.x,b.y-from.y));
-          for(const next of nearby.slice(0,tower.type==='storm'?(depth===0?3:2):1)){
-            if(struck.has(next)||struck.size>stats.chain)break;
-            this.hit(next,Math.round(stats.damage*(tower.type==='storm'?.84**(depth+1):.73**(depth+1))),stats.slow);
-            const duration=tower.type==='storm'?.39:.24;
+        for(let i=0;i<forks.length&&struck.size<=stats.chain;i++){
+          const {enemy:from,depth}=forks[i];
+          const limit=Math.min(stats.chain+1-struck.size,storm?(depth===0?3:2):1);
+          const nearby=nearestChainTargets(this.enemies,from,struck,stats.jumpRange??81,limit);
+          for(const {enemy:next} of nearby){
+            this.hit(next,Math.round(stats.damage*(storm?.84:.73)**(depth+1)),stats.slow);
+            const duration=storm?.39:.24;
             this.effects.push({kind:tower.type,x:from.x,y:from.y,tx:next.x,ty:next.y,color:stats.color,ttl:duration,max:duration});
             struck.add(next);
             forks.push({enemy:next,depth:depth+1});
@@ -1789,6 +1802,45 @@ function drawRouteIntel(canvas,map,index,junction){
   ctx.restore();
 }
 
+const LIGHTNING_BATCH_THRESHOLD=32;
+const LIGHTNING_FADE_LEVELS=4;
+const isLightning=effect=>effect.kind==='tesla'||effect.kind==='storm';
+
+function drawLightningBatch(ctx,effects){
+  const paths=Array.from({length:LIGHTNING_FADE_LEVELS*2},()=>null);
+  for(const {kind,x,y,tx,ty,ttl,max} of effects){
+    const fade=ttl/max,storm=kind==='storm';
+    const level=Math.min(LIGHTNING_FADE_LEVELS-1,Math.floor(fade*LIGHTNING_FADE_LEVELS));
+    const index=(storm?LIGHTNING_FADE_LEVELS:0)+level;
+    const path=paths[index]??(paths[index]=new Path2D());
+    const dx=tx-x,dy=ty-y,length=Math.hypot(dx,dy)||1;
+    const steps=Math.max(3,Math.ceil(length/24));
+    const bend=Math.min(storm?18:13,length*.18);
+    path.moveTo(x,y);
+    for(let i=1;i<steps;i++){
+      const f=i/steps;
+      const offset=Math.sin(i*8.17+(1-fade)*17+x*.05)*bend/length;
+      path.lineTo(x+dx*f-dy*offset,y+dy*f+dx*offset);
+    }
+    path.lineTo(tx,ty);
+  }
+  ctx.save();
+  ctx.lineCap='round';ctx.lineJoin='round';
+  for(const [index,path] of paths.entries()){
+    if(!path)continue;
+    const storm=index>=LIGHTNING_FADE_LEVELS;
+    const level=index%LIGHTNING_FADE_LEVELS;
+    ctx.globalAlpha=(level+.5)/LIGHTNING_FADE_LEVELS;
+    ctx.strokeStyle=TOWERS[storm?'storm':'tesla'].color+'78';
+    ctx.lineWidth=storm?8:6;
+    ctx.stroke(path);
+    ctx.strokeStyle='#f8eaff';
+    ctx.lineWidth=storm?2.5:2;
+    ctx.stroke(path);
+  }
+  ctx.restore();
+}
+
 function createField(canvas){
   const c=canvas.getContext('2d');
   const maps=new Map();
@@ -1820,7 +1872,13 @@ function createField(canvas){
     const pads=game.pads;
     game.towers.forEach((tower,index)=>{if(tower)drawTower(c,...pads[index],tower);});
     for(const enemy of game.enemies)if(enemy.hp>0)drawEnemyModel(c,enemy,game.freezeTimer>0);
-    for(const effect of game.effects)drawEffect(c,effect);
+    const lightning=game.effects.length>=LIGHTNING_BATCH_THRESHOLD?game.effects.filter(isLightning):null;
+    if(lightning&&lightning.length>=LIGHTNING_BATCH_THRESHOLD){
+      drawLightningBatch(c,lightning);
+      for(const effect of game.effects)if(!isLightning(effect))drawEffect(c,effect);
+    }else{
+      for(const effect of game.effects)drawEffect(c,effect);
+    }
   };
 }
 
