@@ -1,0 +1,67 @@
+{
+  "capturedOn": "2026-11-07",
+  "boards": {
+    "campaign": [
+      {
+        "rank": 1,
+        "nickname": "外挂",
+        "waves": 24,
+        "kills": 748,
+        "timeMs": 626900
+      },
+      {
+        "rank": 2,
+        "nickname": "Lucien爸爸",
+        "waves": 24,
+        "kills": 748,
+        "timeMs": null
+      },
+      {
+        "rank": 2,
+        "nickname": "Lee Chong Wei",
+        "waves": 24,
+        "kills": 750,
+        "timeMs": null
+      }
+    ],
+    "snow": [
+      {
+        "rank": 1,
+        "nickname": "外挂",
+        "waves": 50,
+        "kills": 1799,
+        "timeMs": 1042183
+      },
+      {
+        "rank": 2,
+        "nickname": "Lee Chong Wei",
+        "waves": 50,
+        "kills": 1789,
+        "timeMs": 1121617
+      }
+    ],
+    "endless": [
+      {
+        "rank": 1,
+        "nickname": "外挂",
+        "waves": 151,
+        "kills": 8918,
+        "timeMs": null
+      },
+      {
+        "rank": 2,
+        "nickname": "Lee Chong Wei",
+        "waves": 134,
+        "kills": 8138,
+        "timeMs": null
+      },
+      {
+        "rank": 3,
+        "nickname": "Lucien爸爸",
+        "waves": 0,
+        "kills": 5,
+        "timeMs": null
+      }
+    ]
+  }
+}

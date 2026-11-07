@@ -294,6 +294,19 @@ kbd{display:inline-block;background:#252b22;color:#cbd0ba;border:1px solid #444c
   .battle-controls .mode-tabs button{min-height:34px}
 }
 
+.battle-controls{align-items:start}
+.wave-controls{flex-wrap:wrap}
+.speed-audio-controls{display:flex;align-items:stretch;gap:7px}
+.audio-controls{display:flex;align-items:center;gap:5px;flex:none}
+.audio-controls .speed-button{padding-inline:7px;white-space:nowrap}
+.audio-controls input{width:clamp(38px,4vw,60px);margin:0;accent-color:#e3c787;cursor:pointer}
+@media(pointer:coarse){.audio-controls input{min-height:34px}}
+.wave-summary{margin:0;padding:0 16px 9px;color:#dbd0a7;font-size:11px;overflow-wrap:anywhere}
+.slots.placing .slot.covers-route:not(.occupied):not(:disabled){border-style:solid;border-color:#b9d798;background:#556942db;box-shadow:0 0 0 2px #b9d74755;color:#f2ffda}
+.upgrade-popover{position:fixed;z-index:8;top:10px;left:10px;margin:0;padding:10px;
+  width:min(310px,calc(100vw - 20px));overflow:auto;overscroll-behavior:contain;
+  border:1px solid #a28b58;border-radius:10px;background:#222b21;box-shadow:0 8px 24px #111b}
+@media(pointer:coarse){.upgrade-popover .upgrade-actions button,.upgrade-popover .sell-tower{min-height:42px}}
 </style>
 <script type="module">
 const WIDTH = 900;
@@ -559,11 +572,113 @@ function pointAt(distance,routeIndex=0,routes=ROUTES){
   return {x,y,angle:0};
 }
 
+const AUDIO_CUES={
+  build:[0,.19002],upgrade:[.21501,.31002],'wave-start':[.55002,.60998],
+  'wave-clear':[1.18499,.56],'base-hit':[1.76998,.34],'low-health':[2.13497,.63002],
+  card:[2.78998,.22],cataclysm:[3.03497,.76],freeze:[3.81995,.56],
+  repair:[4.40494,.5],overdrive:[4.92993,.48998],arrow:[5.44490,.12],
+  cannon:[5.58989,.26],frost:[5.87488,.20998],tesla:[6.10984,.12],
+  storm:[6.25483,.2],blizzard:[6.47982,.62],hail:[7.12481,.54],aurora:[7.68980,.64998],
+};
+const ATTACK_CUES={arrow:'arrow',cannon:'cannon',frost:'frost',tesla:'tesla',storm:'storm',
+  sniper:'arrow',mortar:'cannon',laser:'tesla',railgun:'storm',gravity:'cannon',sunlance:'storm'};
+const AUDIO_COOLDOWN={arrow:70,cannon:110,frost:95,tesla:100,storm:100,card:180,'base-hit':125};
+
+function createBattleAudio(storage){
+  const key='ember-gate-defense-td:audio';
+  let settings;
+  try{settings=JSON.parse(storage?.getItem(key)??'null');}catch{}
+  let enabled=settings?.enabled!==false;
+  let volume=Number.isFinite(settings?.volume)?Math.min(1,Math.max(0,settings.volume)):.55;
+  let context,master,buffer,loading;
+  const voices=new Map();
+  const lastPlayed=new Map();
+  const pending=new Map();
+  function persist(){
+    try{storage?.setItem(key,JSON.stringify({enabled,volume}));}catch{}
+  }
+  function finish(source,stop){
+    voices.delete(source);
+    if(stop){try{source.stop();}catch{}}
+    try{source.disconnect();}catch{}
+  }
+  function stop(){
+    pending.clear();
+    for(const source of voices.keys())finish(source,true);
+    lastPlayed.clear();
+  }
+  function play(name){
+    if(!enabled||!volume||document.hidden||!context||!Object.hasOwn(AUDIO_CUES,name))return;
+    const priority=name==='low-health'?3:
+      (name.startsWith('wave-')||name==='base-hit'||Object.hasOwn(SKILLS,name))?2:
+      Object.hasOwn(ATTACK_CUES,name)?0:1;
+    const now=performance.now();
+    if(!buffer||context.state!=='running'){
+      if(loading&&priority>=2)pending.set(name,now);
+      return;
+    }
+    if(now-(lastPlayed.get(name)??-Infinity)<(AUDIO_COOLDOWN[name]??45))return;
+    if(voices.size>=10){
+      let victim=null,lowest=priority;
+      for(const [source,level] of voices)if(level<lowest){victim=source;lowest=level;}
+      if(!victim)return;
+      finish(victim,true);
+    }
+    try{
+      const source=context.createBufferSource();
+      source.buffer=buffer;
+      source.connect(master);
+      source.onended=()=>finish(source,false);
+      const [offset,duration]=AUDIO_CUES[name];
+      voices.set(source,priority);
+      try{source.start(0,offset,duration);}catch{finish(source,false);return;}
+      lastPlayed.set(name,now);
+    }catch{}
+  }
+  function unlock(){
+    if(!enabled)return Promise.resolve();
+    try{
+      if(!context){
+        const Audio=window.AudioContext??window.webkitAudioContext;
+        if(!Audio)return Promise.resolve();
+        context=new Audio();
+        master=context.createGain();
+        master.gain.value=volume;
+        master.connect(context.destination);
+      }
+      const resumed=context.state==='running'?Promise.resolve():context.resume();
+      if(!loading&&!buffer){
+        loading=fetch('./assets/ember-sfx.wav')
+          .then(response=>{if(!response.ok)throw new Error('Audio unavailable');return response.arrayBuffer();})
+          .then(bytes=>new Promise((resolve,reject)=>{
+            context.decodeAudioData(bytes,resolve,reject)?.then(resolve,reject);
+          }))
+          .then(decoded=>{buffer=decoded;})
+          .catch(()=>{})
+          .finally(()=>{loading=null;});
+      }
+      return Promise.all([resumed,loading]).then(()=>{
+        for(const [name,time] of pending)if(performance.now()-time<1200)play(name);
+        pending.clear();
+      }).catch(()=>pending.clear());
+    }catch{return Promise.resolve();}
+  }
+  return {
+    unlock,play,stop,
+    state:()=>context?.state??'idle',
+    enabled:()=>enabled,volume:()=>volume,
+    setEnabled(value){enabled=value;if(!value)stop();persist();},
+    setVolume(value){volume=Math.min(1,Math.max(0,value));if(master)master.gain.value=volume;if(!volume)stop();persist();},
+  };
+}
+
 function nearestChainTargets(enemies,from,struck,range,limit){
   const nearest=[];
   for(const enemy of enemies){
     if(enemy.hp<=0||struck.has(enemy))continue;
-    const distance=Math.hypot(enemy.x-from.x,enemy.y-from.y);
+    const dx=enemy.x-from.x,dy=enemy.y-from.y;
+    if(Math.abs(dx)>=range||Math.abs(dy)>=range)continue;
+    const distance=Math.hypot(dx,dy);
     if(distance>=range||(nearest.length===limit&&distance>=nearest[limit-1].distance))continue;
     let index=nearest.length;
     while(index>0&&distance<nearest[index-1].distance)index--;
@@ -574,11 +689,12 @@ function nearestChainTargets(enemies,from,struck,range,limit){
 }
 
 class Game {
-  constructor(mode='campaign'){this.mode=mode;this.reset();}
+  constructor(mode='campaign',onSound){this.mode=mode;this.onSound=onSound;this.reset();}
 
   reset(){
     this.gold=this.mode==='endless'?1700:this.mode==='snow'?850:240;
     this.lives=BASE_LIVES;
+    this.lowHealthWarned=false;
     this.fortificationLevel=0;
     this.wave=0;
     this.kills=0;
@@ -629,6 +745,7 @@ class Game {
     if(this.finished || !isSlot(index,this.map) || this.towers[index] || !spec || !this.canBuildType(type) || this.atTowerLimit(type) || this.gold<spec.cost) return false;
     this.gold-=spec.cost;
     this.towers[index]={type,damage:0,speed:0,spent:spec.cost,cooldown:0,angle:-Math.PI/2,stunned:0,webbed:0,frozen:0};
+    this.onSound?.('build');
     this.revision++;
     return true;
   }
@@ -639,6 +756,7 @@ class Game {
     this.gold-=cost;
     this.towers[index][track]++;
     this.towers[index].spent+=cost;
+    this.onSound?.('upgrade');
     this.revision++;
     return true;
   }
@@ -687,6 +805,7 @@ class Game {
     this.spawned=0;
     this.spawnTimer=.28;
     this.weather=this.map.snow?snowForecast():null;
+    this.onSound?.('wave-start');
     this.revision++;
     return true;
   }
@@ -746,6 +865,7 @@ class Game {
     if(!choices.length)return;
     const key=choices[(roll>>>9)%choices.length];
     this.cards[key]++;
+    this.onSound?.('card');
     this.effects.push({kind:'card',x:enemy.x,y:enemy.y,text:'✦ '+SKILLS[key].name,ttl:1.4,max:1.4});
   }
 
@@ -773,6 +893,7 @@ class Game {
       }
     }
     this.cards[key]--;
+    this.onSound?.(key);
     this.revision++;
     return true;
   }
@@ -808,6 +929,11 @@ class Game {
       if(e.distance>=routes[e.route].length){
         e.hp=0;
         this.lives=Math.max(0,this.lives-e.leak);
+        this.onSound?.('base-hit');
+        if(!this.lowHealthWarned&&this.lives<=Math.ceil(this.maxLives*.25)){
+          this.lowHealthWarned=true;
+          if(this.lives>0)this.onSound?.('low-health');
+        }
         this.effects.push({kind:'leak',x:e.x,y:e.y,text:'−'+e.leak,ttl:.8,max:.8});
         this.revision++;
       }else if(e.ability&&e.age>=e.abilityAt){
@@ -862,12 +988,17 @@ class Game {
     if(this.weather.remaining>0)return;
     const {type,active}=this.weather;
     this.weather=active?snowForecast(type):{type,active:true,remaining:WEATHER[type].duration};
+    if(!active)this.onSound?.(type);
     this.revision++;
   }
 
   step(dt){
-    for(const e of this.effects) e.ttl-=dt;
-    this.effects=this.effects.filter(e=>e.ttl>0);
+    let remainingEffects=0;
+    for(const effect of this.effects){
+      effect.ttl-=dt;
+      if(effect.ttl>0)this.effects[remainingEffects++]=effect;
+    }
+    this.effects.length=remainingEffects;
     if(this.phase!=='active') return;
     if(this.mode!=='endless'&&this.combatTime!==null)this.combatTime+=dt;
     const wave=this.waveInfo;
@@ -920,6 +1051,7 @@ class Game {
       if(!target) continue;
       tower.angle=Math.atan2(target.y-y,target.x-x);
       tower.cooldown=1/stats.rate;
+      if(this.onSound)this.onSound(ATTACK_CUES[tower.type]);
       this.hit(target,stats.damage,stats.slow,stats.pierce);
       if(stats.beam){
         const dx=Math.cos(tower.angle),dy=Math.sin(tower.angle);
@@ -964,7 +1096,9 @@ class Game {
       }
       if(!stats.beam){
         const duration=stats.splash?.46:.27;
-        this.effects.push({kind:tower.type,x,y,tx:target.x,ty:target.y,color:stats.color,radius:stats.splash,ttl:duration,max:duration});
+        const effect={kind:tower.type,x,y,tx:target.x,ty:target.y,color:stats.color,radius:stats.splash,ttl:duration,max:duration};
+        if(stats.chain)effect.primary=true;
+        this.effects.push(effect);
         if(tower.type==='gravity')this.effects.push({kind:'gravity-field',x:target.x,y:target.y,
           radius:stats.splash,damage:stats.damage*.22,ttl:stats.fieldDuration,max:stats.fieldDuration,color:stats.color});
       }
@@ -985,6 +1119,7 @@ class Game {
       this.weather=null;
       for(const tower of this.towers)if(tower)tower.stunned=tower.webbed=tower.frozen=0;
       this.phase=this.wave===this.waveCount?'won':'between';
+      this.onSound?.('wave-clear');
       this.revision++;
     }
   }
@@ -1281,9 +1416,11 @@ function drawAim(ctx,{x,y},radius){
   ctx.restore();
 }
 
-function drawEffect(ctx,e){
+const particleEffects=new Set(['beam-impact','tesla','storm','cannon','mortar','gravity','frost','arrow','sniper']);
+function drawEffect(ctx,e,sparkBudget){
   const fade=e.ttl/e.max,t=1-fade;
   const {kind,x,y,tx,ty}=e;
+  const particles=!sparkBudget||!particleEffects.has(kind)||sparkBudget.remaining-- > 0;
   ctx.save();ctx.globalAlpha=fade;ctx.lineCap='round';ctx.lineJoin='round';
   if(kind==='coin'||kind==='leak'||kind==='card'){
     ctx.font='bold 14px system-ui';ctx.textAlign='center';ctx.lineWidth=3;ctx.strokeStyle='#352e20';
@@ -1331,7 +1468,7 @@ function drawEffect(ctx,e){
   }else if(kind==='beam-impact'){
     flash(ctx,x,y,25+t*9,e.color);
     ring(ctx,x,y,8+t*18,'#fff8df',2.6);
-    sparks(ctx,x,y,10+t*15,e.color,8,t);
+    if(particles)sparks(ctx,x,y,10+t*15,e.color,8,t);
   }else if(kind==='cataclysm'){
     const {radius,color}=e;
     flash(ctx,x,y,radius*(.54+.46*t),color);
@@ -1380,7 +1517,7 @@ function drawEffect(ctx,e){
         ctx.strokeStyle='#f8eaff';ctx.lineWidth=kind==='storm'?1.1:1.3;ctx.stroke();
       }
       flash(ctx,tx,ty,kind==='storm'?23:14,color);
-      sparks(ctx,tx,ty,8+t*13,color,5,t);
+      if(particles)sparks(ctx,tx,ty,8+t*13,color,5,t);
     }else if(kind==='cannon'||kind==='mortar'||kind==='gravity'){
       const radius=e.radius??50;
       const travel=Math.min(1,t/.27);
@@ -1393,19 +1530,19 @@ function drawEffect(ctx,e){
         flash(ctx,tx,ty,Math.max(12,radius*(.32+spread*.45)),color);
         ring(ctx,tx,ty,15+spread*(radius-15),color,kind==='gravity'?4.2:3.1);
         ring(ctx,tx,ty,7+spread*radius*.72,'#ffe5bc',1.5);
-        sparks(ctx,tx,ty,18+spread*radius*.76,color,kind==='cannon'?7:11,t);
+        if(particles)sparks(ctx,tx,ty,18+spread*radius*.76,color,kind==='cannon'?7:11,t);
       }
     }else if(kind==='frost'){
       segment(ctx,x,y,tx,ty,'#7fc6e972',6);
       segment(ctx,x,y,tx,ty,'#d9fcff',1.5);
       ring(ctx,tx,ty,5+t*22,'#a4ecff',1.7);
-      sparks(ctx,tx,ty,9+t*17,'#d8f9ff',6,t);
+      if(particles)sparks(ctx,tx,ty,9+t*17,'#d8f9ff',6,t);
     }else{
       const start=Math.max(0,t*1.7-.32),end=Math.min(1,t*2.7+.14);
       const fast=kind==='sniper';
       segment(ctx,x+dx*start,y+dy*start,x+dx*end,y+dy*end,color+'5a',fast?9:5);
       segment(ctx,x+dx*start,y+dy*start,x+dx*end,y+dy*end,fast?'#fff1ca':color,fast?2.5:1.6);
-      if(end===1)sparks(ctx,tx,ty,5+t*16,color,fast?6:3,t);
+      if(particles&&end===1)sparks(ctx,tx,ty,5+t*16,color,fast?6:3,t);
       if(t<.35)flash(ctx,x+ux*12,y+uy*12,fast?15:9,color);
     }
   }
@@ -1804,25 +1941,36 @@ function drawRouteIntel(canvas,map,index,junction){
 
 const LIGHTNING_BATCH_THRESHOLD=32;
 const LIGHTNING_FADE_LEVELS=4;
+const MAX_LIGHTNING_PRIMARY=72;
+const MAX_LIGHTNING_BRANCHES=104;
+const MAX_COMBAT_SPARK_BURSTS=24;
 const isLightning=effect=>effect.kind==='tesla'||effect.kind==='storm';
 
 function drawLightningBatch(ctx,effects){
   const paths=Array.from({length:LIGHTNING_FADE_LEVELS*2},()=>null);
-  for(const {kind,x,y,tx,ty,ttl,max} of effects){
+  let primaryCount=0,branchCount=0;
+  for(let i=effects.length-1;i>=0;i--){
+    const effect=effects[i];
+    if(effect.primary){
+      if(primaryCount>=MAX_LIGHTNING_PRIMARY)continue;
+      primaryCount++;
+    }else{
+      if(branchCount>=MAX_LIGHTNING_BRANCHES)continue;
+      branchCount++;
+    }
+    const {kind,x,y,tx,ty,ttl,max}=effect;
     const fade=ttl/max,storm=kind==='storm';
     const level=Math.min(LIGHTNING_FADE_LEVELS-1,Math.floor(fade*LIGHTNING_FADE_LEVELS));
     const index=(storm?LIGHTNING_FADE_LEVELS:0)+level;
     const path=paths[index]??(paths[index]=new Path2D());
     const dx=tx-x,dy=ty-y,length=Math.hypot(dx,dy)||1;
-    const steps=Math.max(3,Math.ceil(length/24));
-    const bend=Math.min(storm?18:13,length*.18);
+    const bend=Math.min(storm?13:9,length*.14)/length;
+    const wobble=Math.sin(x*.05+y*.07);
     path.moveTo(x,y);
-    for(let i=1;i<steps;i++){
-      const f=i/steps;
-      const offset=Math.sin(i*8.17+(1-fade)*17+x*.05)*bend/length;
-      path.lineTo(x+dx*f-dy*offset,y+dy*f+dx*offset);
-    }
+    path.lineTo(x+dx*.34-dy*bend*wobble,y+dy*.34+dx*bend*wobble);
+    path.lineTo(x+dx*.68+dy*bend*wobble,y+dy*.68-dx*bend*wobble);
     path.lineTo(tx,ty);
+    if(primaryCount===MAX_LIGHTNING_PRIMARY&&branchCount===MAX_LIGHTNING_BRANCHES)break;
   }
   ctx.save();
   ctx.lineCap='round';ctx.lineJoin='round';
@@ -1844,6 +1992,8 @@ function drawLightningBatch(ctx,effects){
 function createField(canvas){
   const c=canvas.getContext('2d');
   const maps=new Map();
+  const lightning=[];
+  const sparkBudget={remaining:MAX_COMBAT_SPARK_BURSTS};
   return function render(game,preview,aim,intel){
     const terrain=game.map,info=game.stage===game.wave?game.waveInfo:waveFor(game.mode,game.stage),lanes=info.lanes;
     const key=terrain.name+lanes;
@@ -1872,13 +2022,15 @@ function createField(canvas){
     const pads=game.pads;
     game.towers.forEach((tower,index)=>{if(tower)drawTower(c,...pads[index],tower);});
     for(const enemy of game.enemies)if(enemy.hp>0)drawEnemyModel(c,enemy,game.freezeTimer>0);
-    const lightning=game.effects.length>=LIGHTNING_BATCH_THRESHOLD?game.effects.filter(isLightning):null;
-    if(lightning&&lightning.length>=LIGHTNING_BATCH_THRESHOLD){
-      drawLightningBatch(c,lightning);
-      for(const effect of game.effects)if(!isLightning(effect))drawEffect(c,effect);
-    }else{
-      for(const effect of game.effects)drawEffect(c,effect);
+    lightning.length=0;
+    sparkBudget.remaining=MAX_COMBAT_SPARK_BURSTS;
+    if(game.effects.length>=LIGHTNING_BATCH_THRESHOLD){
+      for(const effect of game.effects)if(isLightning(effect))lightning.push(effect);
     }
+    const crowded=lightning.length>=LIGHTNING_BATCH_THRESHOLD;
+    if(crowded)drawLightningBatch(c,lightning);
+    const budget=game.effects.length>=64?sparkBudget:null;
+    for(const effect of game.effects)if(!crowded||!isLightning(effect))drawEffect(c,effect,budget);
   };
 }
 
@@ -2181,12 +2333,12 @@ function setupLeaderboard(records,storage){
   const result=byId('rank-submit-status');
   const online=document.documentElement.dataset.online==='true';
   const profileKey='ember-gate-defense-td:rank-profile';
-  let mode='campaign',loadId=0,sending=false,profile={};
+  let mode='campaign',loadId=0,sending=false,profile={},archive;
   try{profile=JSON.parse(storage?.getItem(profileKey)??'null')??{};}catch{}
   if(typeof profile!=='object')profile={};
   nickname.value=normalizeRankName(profile.nickname)??'';
   form.hidden=!online;
-  byId('rank-online-note').hidden=!online;
+  byId('rank-online-note').hidden=false;
   byId('rank-offline-note').hidden=online;
 
   function saveProfile(){
@@ -2197,7 +2349,7 @@ function setupLeaderboard(records,storage){
     const score=records.get(mode);
     const eligible=hasScore(score)&&validRankScore(mode,score.waves,score.kills,score.timeMs);
     byId('rank-personal').textContent=mode!=='endless'
-      ?eligible?`已完成 ${score.waves} / ${rankWaveCount(mode)} 波${score.timeMs!=null?` · ${formatRunTime(score.timeMs)}`:''}`:'完成一波后可提交成绩'
+      ?eligible?`已完成 ${score.waves} / ${rankWaveCount(mode)} 波${score.timeMs!=null?` · ${formatRunTime(score.timeMs)}`:''}`:online?'完成一波后可提交成绩':'完成一波后开始记录'
       :hasScore(score)?`通关 ${score.waves} 波 · 击杀 ${score.kills} 名`:'完成一波或击杀敌人后开始记录';
     submit.disabled=sending||!eligible;
   }
@@ -2205,14 +2357,26 @@ function setupLeaderboard(records,storage){
   async function refreshList(){
     const id=++loadId;
     list.replaceChildren();
-    if(!online)return;
     listStatus.textContent='正在加载排行榜…';
     try{
-      const response=await fetch('/api/leaderboard?mode='+mode,{
-        cache:'no-store',signal:AbortSignal.timeout?.(8000),
-      });
-      if(!response.ok)throw new Error();
-      const {entries}=await response.json();
+      let entries;
+      if(online){
+        const response=await fetch('/api/leaderboard?mode='+mode,{
+          cache:'no-store',signal:AbortSignal.timeout?.(8000),
+        });
+        if(!response.ok)throw new Error();
+        ({entries}=await response.json());
+      }else{
+        const selectedMode=mode;
+        archive??=fetch('./assets/legacy-leaderboard.json').then(response=>{
+          if(!response.ok)throw new Error();
+          return response.json();
+        }).catch(error=>{archive=null;throw error;});
+        const snapshot=await archive;
+        entries=snapshot.boards[selectedMode];
+        if(id===loadId)byId('rank-offline-note').textContent=
+          '旧站历史成绩 · 收录于 '+snapshot.capturedOn+' · 本机个人最佳单独记录';
+      }
       if(id!==loadId)return;
       entries.forEach(({nickname,waves,kills,timeMs,rank},index)=>{
         const row=document.createElement('tr');
@@ -2226,7 +2390,7 @@ function setupLeaderboard(records,storage){
         }
         list.append(row);
       });
-      listStatus.textContent=entries.length?'':'榜单还没有成绩，等你来上榜。';
+      listStatus.textContent=entries.length?'':online?'榜单还没有成绩，等你来上榜。':'旧站榜单暂无公开成绩。';
     }catch{
       if(id===loadId)listStatus.textContent='暂时无法加载排行榜，请重新打开后重试。';
     }
@@ -2334,6 +2498,13 @@ for(const mode of gameModes){
 }
 const leaderboard=setupLeaderboard(records,progressStorage);
 const runs=new Map();
+const battleAudio=createBattleAudio(progressStorage);
+function connectGameAudio(game){
+  game.onSound=battleAudio.play;
+  if(game.lives<=Math.ceil(game.maxLives*.25))game.lowHealthWarned=true;
+}
+connectGameAudio(game);
+
 const render = createField(el('field'));
 const towerTypes = Object.keys(TOWERS);
 const towerKeys = '1234567890l';
@@ -2368,6 +2539,8 @@ let aim=null;
 let currentMap=null;
 let touchPad=null;
 let currentRoster=null;
+let wavePreview=null;
+let coveragePreview=null;
 let intelStage=null;
 let routeIntel=null;
 let lastSave=performance.now();
@@ -2380,6 +2553,7 @@ function saveProgress(){
 }
 
 function pauseForBackground(){
+  battleAudio.stop();
   if(game.phase!=='active'||paused)return;
   paused=true;
   saveProgress();
@@ -2418,11 +2592,53 @@ for(const [type,enemy] of Object.entries(ENEMIES)){
   el('enemy-list').append(item);
 }
 
-function showRoster(info){
-  if(currentRoster===info)return;
-  currentRoster=info;
+function activeWaveRoutes(info){
+  const indices=new Set();
+  info.queue.forEach((type,index)=>indices.add(info.route??(type===info.boss?.type?info.boss.route:index%info.lanes)));
+  return [...indices].sort((a,b)=>a-b);
+}
+
+function getWavePreview(map,info){
+  if(wavePreview?.map===map&&wavePreview.info===info)return wavePreview;
+  const routes=activeWaveRoutes(info);
   const counts=new Map();
   for(const type of info.queue)counts.set(type,(counts.get(type)??0)+1);
+  wavePreview={map,info,routes,counts};
+  const roster=[...counts].map(([type,count])=>ENEMIES[type].name+' ×'+count).join('、');
+  el('wave-summary').textContent=roster+' · '+routes.map(i=>map.routes[i].name).join('、');
+  return wavePreview;
+}
+
+function canCoverRoute(x,y,range,{segments}){
+  return segments.some(({x:sx,y:sy,dx,dy})=>{
+    const t=Math.max(0,Math.min(1,((x-sx)*dx+(y-sy)*dy)/(dx*dx+dy*dy)));
+    return Math.hypot(x-sx-t*dx,y-sy-t*dy)<=range;
+  });
+}
+
+function coveredSlots(preview,type,pads){
+  if(!type)return null;
+  if(coveragePreview?.preview===preview&&coveragePreview.type===type)return coveragePreview.slots;
+  const {map,routes}=preview;
+  const range=TOWERS[type].range;
+  const slots=pads.slice(0,map.slotCount).map(([x,y])=>routes.some(i=>canCoverRoute(x,y,range,map.routes[i])));
+  coveragePreview={preview,type,slots};
+  return slots;
+}
+
+function flashWaveEntrances(){
+  const reduced=matchMedia('(prefers-reduced-motion:reduce)').matches;
+  const {routes}=getWavePreview(game.map,game.waveInfo);
+  for(const index of routes){
+    const marker=entrances[index];
+    marker.animate?.([{backgroundColor:'#ad7842',color:'#fff6d9',boxShadow:'0 0 16px #ffd994'},{}],
+      {duration:reduced?450:1250,easing:'ease-out'});
+  }
+}
+
+function showRoster(info,counts){
+  if(currentRoster===info)return;
+  currentRoster=info;
   const roster=el('wave-enemies');
   roster.replaceChildren();
   for(const [type,count] of counts){
@@ -2538,7 +2754,37 @@ el('board').addEventListener('click',event=>{
   targetCataclysm(x,y,event.pointerType==='touch'||event.pointerType==='pen');
 });
 
-el('upgrade').innerHTML=`<header><h3 id="inspect-title"></h3><button id="inspect-close" class="icon-button" type="button" aria-label="关闭防御塔面板">${icon('cross')}</button></header>
+const upgradePanel=el('upgrade');
+function positionUpgrade(){
+  if(upgradePanel.hidden||inspected===null)return;
+  const anchor=slots[inspected].getBoundingClientRect();
+  const view=window.visualViewport;
+  const left=(view?.offsetLeft??0)+10;
+  const top=(view?.offsetTop??0)+10;
+  const right=(view?.offsetLeft??0)+(view?.width??innerWidth)-10;
+  const bottom=Math.min((view?.offsetTop??0)+(view?.height??innerHeight)-10,
+    compactControls.matches?document.querySelector('.build-panel').getBoundingClientRect().top-8:Infinity);
+  const width=upgradePanel.offsetWidth;
+  upgradePanel.style.maxHeight=Math.max(100,bottom-top)+'px';
+  const height=upgradePanel.offsetHeight;
+  const cx=(anchor.left+anchor.right)/2,cy=(anchor.top+anchor.bottom)/2;
+  let x,y;
+  if(anchor.right+10+width<=right||anchor.left-10-width>=left){
+    x=anchor.right+10+width<=right?anchor.right+10:anchor.left-10-width;
+    y=cy-height/2;
+  }else{
+    x=cx-width/2;
+    y=anchor.bottom+10+height<=bottom?anchor.bottom+10:anchor.top-10-height;
+  }
+  upgradePanel.style.left=Math.max(left,Math.min(right-width,x))+'px';
+  upgradePanel.style.top=Math.max(top,Math.min(bottom-height,y))+'px';
+}
+window.addEventListener('resize',positionUpgrade);
+window.addEventListener('scroll',positionUpgrade,{capture:true,passive:true});
+window.visualViewport?.addEventListener('resize',positionUpgrade);
+window.visualViewport?.addEventListener('scroll',positionUpgrade);
+new ResizeObserver(positionUpgrade).observe(upgradePanel);
+upgradePanel.innerHTML=`<header><h3 id="inspect-title"></h3><button id="inspect-close" class="icon-button" type="button" aria-label="关闭防御塔面板">${icon('cross')}</button></header>
 <dl class="inspect-stats">
   <div><dt>单发伤害</dt><dd id="inspect-damage"></dd></div>
   <div><dt>射速</dt><dd id="inspect-rate"></dd></div>
@@ -2551,7 +2797,7 @@ el('inspect-close').addEventListener('click',()=>{
   const slot=inspected;
   inspected=null;
   sync();
-  slots[slot]?.focus();
+  slots[slot]?.focus({preventScroll:true});
 });
 for(const [track,label] of Object.entries(tracks)){
   el('upgrade-'+track).addEventListener('click',()=>{
@@ -2571,7 +2817,7 @@ el('sell-tower').addEventListener('click',()=>{
   showNotice('防御塔已拆除，退回 '+refund+' 黄金。');
   saveProgress();
   sync();
-  slots[slot].focus();
+  slots[slot].focus({preventScroll:true});
 });
 
 function showNotice(message){
@@ -2605,7 +2851,7 @@ function selectSlot(index,touch){
     inspected=inspected===index ? null : index;
     touchPad=null;
     sync();
-    if(inspected!==null&&compactControls.matches)el('upgrade').scrollIntoView({block:'nearest',inline:'nearest'});
+    if(inspected!==null)positionUpgrade();
     return;
   }
   if(!chosen){
@@ -2634,13 +2880,22 @@ function selectSlot(index,touch){
 
 function toggleWave(){
   if(game.finished)return;
-  if(game.phase==='active')paused=!paused;
-  else {game.start();autoRemaining=AUTO_WAVE_DELAY;}
+  const before=game.wave;
+  if(game.phase==='active'&&!paused){
+    paused=true;
+    battleAudio.stop();
+  }else{
+    battleAudio.unlock().then(syncAudio);
+    if(game.phase==='active')paused=false;
+    else {game.start();autoRemaining=AUTO_WAVE_DELAY;}
+  }
   saveProgress();
   sync();
+  if(game.wave!==before)flashWaveEntrances();
 }
 
 function reset(){
+  battleAudio.stop();
   records.consider(game);
   game.reset();
   chosen=null;
@@ -2663,10 +2918,12 @@ function reset(){
 
 function switchMode(mode){
   if(game.mode===mode)return;
+  battleAudio.stop();
   saveProgress();
   runs.set(game.mode,{game,speed});
   const run=runs.get(mode)??loadProgress(progressStorage,mode);
   game=run?.game??new Game(mode);
+  connectGameAudio(game);
   intelStage=null;
   routeIntel=null;
   speed=run?.speed??1;
@@ -2692,6 +2949,25 @@ function switchMode(mode){
 for(const mode of gameModes)el('mode-'+mode).addEventListener('click',()=>switchMode(mode));
 el('end-mode').addEventListener('click',()=>switchMode(endMode[game.mode]));
 
+function syncAudio(){
+  const on=battleAudio.enabled();
+  const unlocked=battleAudio.state()!=='idle';
+  el('audio-toggle').textContent=on?(unlocked?'音效 · 开':'开启音效'):'音效 · 关';
+  el('audio-toggle').setAttribute('aria-pressed',String(on&&unlocked));
+  el('audio-toggle').setAttribute('aria-label',on&&unlocked?'静音':'开启音效');
+  el('audio-volume').value=Math.round(battleAudio.volume()*100);
+}
+el('audio-toggle').addEventListener('click',()=>{
+  const enable=!battleAudio.enabled()||battleAudio.state()==='idle';
+  battleAudio.setEnabled(enable);
+  if(enable)battleAudio.unlock().then(syncAudio);
+  syncAudio();
+});
+el('audio-volume').addEventListener('input',event=>{
+  battleAudio.setVolume(Number(event.target.value)/100);
+});
+syncAudio();
+
 el('start').addEventListener('click',toggleWave);
 el('auto-wave').addEventListener('click',()=>{
   autoBattle=!autoBattle;
@@ -2703,6 +2979,7 @@ el('auto-wave').addEventListener('click',()=>{
 for(const button of ['open-rank','end-rank']){
   el(button).addEventListener('click',()=>{
     saveProgress();
+    battleAudio.stop();
     leaderboard.open(game.mode);
   });
 }
@@ -2722,6 +2999,7 @@ el('confirm-reset').addEventListener('click',reset);
 el('cancel-reset').addEventListener('click',()=>el('reset-dialog').close());
 el('end-dialog').addEventListener('cancel',event=>event.preventDefault());
 el('reset-top').addEventListener('click',()=>{
+  battleAudio.stop();
   if(game.wave||game.towers.some(Boolean))el('reset-dialog').showModal();
   else reset();
 });
@@ -2824,7 +3102,8 @@ function sync(){
   if(phase!=='active')clearAim();
   updateMap(map);
   updateWeather();
-  showRoster(info);
+  const preview=getWavePreview(map,info);
+  showRoster(info,preview.counts);
   showRouteIntel(mode,stage,info);
   for(const tab of gameModes)el('mode-'+tab).setAttribute('aria-pressed',String(tab===mode));
   const stageLabel=String(stage).padStart(2,'0');
@@ -2858,7 +3137,7 @@ function sync(){
   const bountyMultiplier=endless?endlessMobRewardMultiplier(stage):1;
   el('wave-detail').textContent=waveDetail+(bountyMultiplier>1?` · 小怪击杀金币 ×${towerNumber.format(bountyMultiplier)}`:'');
   el('board').dataset.lanes=info.lanes;
-  const routeHidden=index=>info.route!=null?index!==info.route:index>=info.lanes;
+  const routeHidden=index=>!preview.routes.includes(index);
   entrances.forEach((entry,i)=>{entry.hidden=routeHidden(i);});
   routeMarkers.forEach((marker,i)=>{marker.hidden=routeHidden(i);});
   const complete=phase==='between'||phase==='won'?wave:Math.max(0,wave-1);
@@ -2917,17 +3196,27 @@ function sync(){
     button.querySelector('.card-stock').textContent=active?'生效中':count;
   }
   el('skill-hint').textContent=targeting?'点击战场施放天罚裂隙。再次点击卡片可取消。':'击杀敌军可掉落卡片，每种最多存 5 张。';
+  const coverage=coveredSlots(preview,chosen,game.pads);
   slots.forEach((button,index)=>{
     const tower=game.towers[index];
+    const covers=!tower&&!!coverage?.[index];
+    button.classList.toggle('covers-route',covers);
+    if(tower){
+      button.setAttribute('aria-expanded',String(inspected===index));
+      button.setAttribute('aria-controls','upgrade');
+    }else{
+      button.removeAttribute('aria-expanded');
+      button.removeAttribute('aria-controls');
+    }
     button.textContent=tower?'':'＋';
     button.classList.toggle('occupied',!!tower);
     button.classList.toggle('preview',inspected===index||touchPad===index);
-    button.setAttribute('aria-label',tower ? `建造点 ${index+1}，${TOWERS[tower.type].name}，查看升级与拆除` : `空建造点 ${index+1}`);
+    button.setAttribute('aria-label',tower ? `建造点 ${index+1}，${TOWERS[tower.type].name}，查看升级与拆除` : `空建造点 ${index+1}${covers?'，射程覆盖本波路线':''}`);
     button.disabled=game.finished;
   });
   const tower=game.towers[inspected];
-  el('map-hint').textContent=targeting?'选择天罚裂隙的施放位置':chosen?(game.atTowerLimit(chosen)?`引力歼灭炮已达到 ${ENDLESS_GRAVITY_LIMIT} 座上限 · 拆除后可重建`:touchPad!==null?'再次点击同一建造点确认':`已选${TOWERS[chosen].name} · 可连续建造`):`${map.slotCount} 个建造点 · 选塔后点击 ＋`;
-  el('upgrade').hidden=!tower||game.finished;
+  el('map-hint').textContent=targeting?'选择天罚裂隙的施放位置':chosen?(game.atTowerLimit(chosen)?`引力歼灭炮已达到 ${ENDLESS_GRAVITY_LIMIT} 座上限 · 拆除后可重建`:touchPad!==null?'再次点击同一建造点确认':`已选${TOWERS[chosen].name} · 亮框覆盖路线 · 可连续建造`):`${map.slotCount} 个建造点 · 选塔后点击 ＋`;
+  upgradePanel.hidden=!tower||game.finished;
   el('shop-hint').lastChild.textContent=chosen?' '+TOWERS[chosen].description:' 商店显示基础数值，点已建造的塔查看当前数值与升级。';
   if(tower&&!game.finished){
     const stats=game.stats(tower);
@@ -2966,6 +3255,7 @@ let accumulator=0;
 function frame(now){
   const elapsed=Math.min((now-previous)/1000,.05);
   previous=now;
+  const before=game.wave;
   if(!paused&&!document.hidden&&!el('reset-dialog').open&&!el('rank-dialog').open){
     const phase=game.phase;
     const remainingSecond=Math.ceil(autoRemaining);
@@ -2983,6 +3273,7 @@ function frame(now){
     updateCampaignClock();
     if(game.map.snow)updateWeather();
   }
+  if(game.wave!==before)flashWaveEntrances();
   const index=touchPad??hovering??focused??inspected;
   const type=game.towers[index]?.type??chosen;
   const visible=index!==null&&index<game.map.slotCount;
@@ -3055,9 +3346,16 @@ requestAnimationFrame(frame);
       <div class="wave-controls" role="group" aria-label="战斗控制">
         <button id="start" class="primary" type="button"><svg><use href="#play"/></svg><span>开始第 1 波</span></button>
         <button id="auto-wave" class="speed-button auto-wave" type="button" aria-pressed="false" title="开启后，下一波将自动开始">连续战斗 · 关</button>
-        <button id="speed" class="speed-button" type="button" aria-label="切换游戏速度">1×</button>
+        <div class="speed-audio-controls">
+          <button id="speed" class="speed-button" type="button" aria-label="切换游戏速度">1×</button>
+          <div class="audio-controls" role="group" aria-label="音效设置">
+            <button id="audio-toggle" class="speed-button" type="button" aria-pressed="false">开启音效</button>
+            <input id="audio-volume" type="range" min="0" max="100" step="1" value="55" aria-label="音效音量" title="音效音量">
+          </div>
+        </div>
       </div>
     </div>
+    <p id="wave-summary" class="wave-summary" aria-label="本波敌军和路线"></p>
     <div id="weather-panel" class="weather-panel" hidden><strong id="weather-title" aria-live="polite"></strong><span id="weather-detail"></span><span id="weather-timer"></span></div>
     <div class="board-viewport" id="board-viewport">
     <div class="board" id="board" aria-label="灰烬隘口战场">
@@ -3075,7 +3373,6 @@ requestAnimationFrame(frame);
     </div>
     </div>
     <footer class="map-footer"><span><i class="legend-pad"></i>建造点</span><span><i class="legend-path"></i>敌军路线</span><span class="map-swipe">左右滑动战场</span><span class="map-hint" id="map-hint">选塔后，点击地图上的 <b>＋</b> 建造</span></footer>
-    <section id="upgrade" class="upgrade" aria-labelledby="inspect-title" hidden></section>
     <section id="route-intel" class="route-intel" aria-labelledby="route-intel-title" hidden>
       <canvas id="route-diagram" width="244" height="128" aria-hidden="true"></canvas>
       <div><div class="eyebrow">ROUTE INTEL · 路线预警</div><h2 id="route-intel-title"></h2><p>彩色实点是新入口，金色圆环是汇合点。</p></div>
@@ -3119,6 +3416,7 @@ requestAnimationFrame(frame);
 <footer class="page-footer"><span>EMBER GATE <i></i> 余烬防线</span><span class="hotkeys"><kbd>1–9 / 0 / L</kbd> 选塔 <kbd>Esc</kbd> 取消 <kbd>Space</kbd> 开始 / 暂停</span></footer>
 </div>
 
+<section id="upgrade" class="upgrade upgrade-popover" aria-labelledby="inspect-title" hidden></section>
 <dialog id="end-dialog" class="dialog" aria-labelledby="end-title" aria-describedby="end-detail">
   <div class="dialog-icon"><svg><use href="#crest"/></svg></div>
   <div id="end-label" class="eyebrow"></div><h2 id="end-title"></h2><p id="end-detail"></p>
@@ -3149,7 +3447,7 @@ requestAnimationFrame(frame);
     </div>
     <p id="rank-list-status" class="rank-status" role="status"></p>
   </div>
-  <p id="rank-offline-note" hidden>离线版可查看本机个人最佳。共享排行榜在<a href="https://ember-gate-defense-td.junlinkun.chatgpt.site/">正式站</a>开放。</p>
+  <p id="rank-offline-note" class="rank-rule" hidden>旧站公开成绩存档 · 本机个人最佳单独记录</p>
   <form id="rank-submit" hidden>
     <label for="rank-name">上榜昵称</label>
     <div class="rank-submit-row">
