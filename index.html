@@ -414,18 +414,19 @@ const ENEMIES = {
   shield: {name:'盾卫', skill:'护盾吸收伤害，破甲可穿透', hp:64, speed:65, bounty:18, leak:2, color:'#96b8c6', size:13, barrier:42},
   shaman: {name:'祭司', skill:'周期治疗周围的其他怪物', hp:53, speed:62, bounty:21, leak:1, color:'#b3c78d', size:12, heal:true},
   shade: {name:'影兽', skill:'减速持续时间缩短 70%', hp:46, speed:117, bounty:16, leak:1, color:'#c9b5e0', size:10, tenacity:.7},
-  boss: {name:'余烬巨兽', skill:'半血后狂暴提速', hp:1150, speed:48, bounty:130, leak:5, color:'#ed8b5c', size:23, rage:true},
+  boss: {name:'余烬巨兽', skill:'震地眩晕附近炮台，半血后狂暴提速', hp:1150, speed:48, bounty:130, leak:5, color:'#ed8b5c', size:23, rage:true},
   colossus: {name:'震岩巨像',skill:'震地波会短暂眩晕附近炮台',speed:38,color:'#f6a467',size:44,ability:'stun'},
-  mirrorbeast: {name:'霜镜巨兽',skill:'周期生成寒晶护盾，穿透攻击可绕过护盾',speed:40,color:'#a5e3ff',size:42,ability:'barrier'},
-  wingking: {name:'裂隙飞龙',skill:'沿路线飞行，蓄力后高速俯冲',speed:43,color:'#e0a7ff',size:47,ability:'rush',flying:true},
-  spider: {name:'枯骨巨蛛',skill:'蛛网使附近炮台射速减半，持续 3 秒',speed:39,color:'#bce297',size:45,ability:'web'},
-  beetle: {name:'熔岩甲虫',skill:'硬化时抵挡 45% 普通伤害，穿透攻击有效',speed:39,color:'#ff9866',size:45,ability:'shell'},
-  warlock: {name:'深渊巫王',skill:'周期沿路线短距离闪现',speed:37,color:'#c3a3fa',size:43,ability:'blink'},
+  mirrorbeast: {name:'霜镜巨兽',skill:'眩晕附近炮台并生成寒晶护盾，穿透攻击可绕过护盾',speed:40,color:'#a5e3ff',size:42,ability:'barrier'},
+  wingking: {name:'裂隙飞龙',skill:'蓄力眩晕附近炮台，再高速俯冲',speed:43,color:'#e0a7ff',size:47,ability:'rush',flying:true},
+  spider: {name:'枯骨巨蛛',skill:'眩晕附近炮台，蛛网使射速减半，持续 3 秒',speed:39,color:'#bce297',size:45,ability:'web'},
+  beetle: {name:'熔岩甲虫',skill:'眩晕附近炮台并硬化，抵挡 45% 普通伤害',speed:39,color:'#ff9866',size:45,ability:'shell'},
+  warlock: {name:'深渊巫王',skill:'眩晕附近炮台后沿路线短距离闪现',speed:37,color:'#c3a3fa',size:43,ability:'blink'},
   snowstalker: {name:'雪原猎犬',skill:'周期冲刺，免疫暴雪减速',hp:62,speed:103,bounty:18,leak:1,color:'#aee9ef',size:12,dash:true,snowAdapted:true},
   yeti: {name:'白岭雪怪',skill:'抵挡 38% 普通伤害，免疫暴雪减速',hp:180,speed:48,bounty:35,leak:3,color:'#d6e5fc',size:21,armor:.38,snowAdapted:true},
   iceguard: {name:'冰晶卫士',skill:'冰甲护盾吸收伤害，破甲可穿透',hp:105,speed:61,bounty:28,leak:2,color:'#8ad0ef',size:16,barrier:108},
-  frostking: {name:'凛冬之王',skill:'预警后冻结附近炮台，冻结时无法开火',speed:35,color:'#a8e7ff',size:48,ability:'freeze-towers',snowAdapted:true},
+  frostking: {name:'凛冬之王',skill:'震荡眩晕附近炮台，并冻结内圈炮台',speed:35,color:'#a8e7ff',size:48,ability:'freeze-towers',snowAdapted:true},
 };
+const bossHealthMultiplier=1.3;
 const repeat = (count,type) => Array(count).fill(type);
 const WAVES = [
   {name:'荒野斥候', note:'基础步兵', queue:repeat(8,'grunt'), gap:.92},
@@ -439,7 +440,7 @@ const WAVES = [
   {name:'三面包围', note:'南线入口开放', queue:[...repeat(8,'runner'),...repeat(9,'shield'),...repeat(5,'shade'),...repeat(6,'brute')], gap:.44},
   {name:'暗潮疾驰', note:'多路高速冲击', queue:[...repeat(11,'shade'),...repeat(9,'runner'),...repeat(8,'brute'),'shaman','shaman'], gap:.40},
   {name:'巨兽前锋', note:'三路重甲混编', queue:[...repeat(7,'brute'),'shaman',...repeat(9,'shield'),'shaman',...repeat(8,'shade'),...repeat(6,'runner')], gap:.40},
-  {name:'余烬巨兽', note:'第一章首领 · 半血狂暴', queue:[...repeat(8,'runner'),...repeat(8,'brute'),'boss',...repeat(6,'shield'),'shaman',...repeat(9,'shade')], gap:.43},
+  {name:'余烬巨兽', note:'第一章首领 · 震地眩晕 · 半血狂暴', queue:[...repeat(8,'runner'),...repeat(8,'brute'),'boss',...repeat(6,'shield'),'shaman',...repeat(9,'shade')], gap:.43},
   {name:'铁脊破口',note:'第二章 · 东线开放',queue:[...repeat(12,'runner'),...repeat(10,'brute'),...repeat(8,'shield'),'shaman'],gap:.46},
   {name:'东线冲阵',note:'冲刺与盾墙',queue:[...repeat(14,'shade'),...repeat(12,'shield'),...repeat(9,'grunt')],gap:.39},
   {name:'游荡祭团',note:'治疗集群',queue:[...repeat(4,'shaman'),...repeat(14,'brute'),...repeat(16,'runner')],gap:.43},
@@ -461,7 +462,7 @@ const snowFinale=[
   {name:'风雪穿行',note:'猎犬冲刺 · 祭司掩护',queue:[...repeat(16,'snowstalker'),'shaman',...repeat(12,'yeti'),'shaman',...repeat(16,'snowstalker'),...repeat(8,'iceguard')],gap:.39},
   {name:'极夜围城',note:'冰盾与雪怪混编',queue:[...repeat(16,'iceguard'),...repeat(16,'yeti'),...repeat(12,'snowstalker'),'shaman',...repeat(8,'iceguard')],gap:.37},
   {name:'凛冬之王',note:'战役决战 · 冰环预警时分散火力',queue:[...repeat(12,'iceguard'),...repeat(8,'yeti'),'frostking',...repeat(16,'snowstalker'),...repeat(12,'iceguard'),...repeat(8,'yeti')],gap:.41,
-    boss:{type:'frostking',tier:1,route:1,hp:26000,bounty:900,radius:155,interval:7.2,stun:2.2}},
+    boss:{type:'frostking',tier:1,route:1,hp:Math.round(26000*bossHealthMultiplier),bounty:900,radius:155,interval:7.2,stun:2.2}},
 ].map(wave=>({...wave,lanes:4}));
 
 const snowFormations=[
@@ -488,7 +489,7 @@ const SNOW_WAVES=[...Array.from({length:44},(_,index)=>{
   const route=(tier-1)%lanes;
   queue.splice(4+tier*2,0,'frostking');
   return {name:['初见凛冬','裂冰之怒','寒潮围城','极夜王座'][tier-1],note:'凛冬之王 · 冰环预警时分散火力',queue,gap,lanes,
-    boss:{type:'frostking',tier,route,hp:[1300,4200,9600,16800][tier-1],bounty:250+tier*100,radius:110+tier*9,interval:8.5-tier*.25,stun:1.3+tier*.2}};
+    boss:{type:'frostking',tier,route,hp:Math.round([1300,4200,9600,16800][tier-1]*bossHealthMultiplier),bounty:250+tier*100,radius:110+tier*9,interval:8.5-tier*.25,stun:1.3+tier*.2}};
 }),...snowFinale];
 
 let endlessNumber=0;
@@ -540,7 +541,7 @@ function waveFor(mode,number,legacy=false,soloRaid=false){
     const type=raidTypes[rotation],route=raidRoutes[rotation],spec=ENEMIES[type];
     const boss={
       type,tier,
-      hp:Math.round(raidHealth(tier)*(1+Math.min(.75,lateWaves*.025))),
+      hp:Math.round(raidHealth(tier)*(1+Math.min(.75,lateWaves*.025))*bossHealthMultiplier),
       bounty:Math.round((1500+650*(tier-1))*endlessRewardMultiplier(number)),
       radius:124+Math.min(38,(tier-1)*4),
       interval:Math.max(5,9-(tier-1)*.33),
@@ -824,16 +825,20 @@ class Game {
     const escortScale=raid&&!spec.ability?Math.min(baseScale,2+previousRaidHealth(raid.tier)/1900):baseScale;
     const scale=escortScale*mobHealthMultiplier;
     const bossScale=this.mode==='endless'?scale:1+Math.max(0,this.wave-12)*.25;
-    const maxHp=spec.ability?raid.hp:Math.round(spec.hp*(type==='boss'?bossScale:scale));
+    const maxHp=spec.ability?raid.hp:Math.round(spec.hp*(type==='boss'?bossScale*bossHealthMultiplier:scale));
     const maxShield=spec.ability==='barrier'?Math.round(maxHp*.12):Math.round((spec.barrier??0)*scale);
     const bounty=spec.ability?raid.bounty:Math.round(spec.bounty*(this.mode==='endless'?
       (type==='boss'?endlessRewardMultiplier(this.wave):endlessMobRewardMultiplier(this.wave)):1));
     const enemy={...spec,type,route,distance:0,maxHp,hp:maxHp,maxShield,shield:maxShield,bounty,age:0,slow:0,
       poison:0,poisonDamage:0,healTimer:1.15,boosted:false,...pointAt(0,route,this.map.routes)};
     if(spec.ability)Object.assign(enemy,{
-      leak:Math.min(18,7+raid.tier),speed:spec.speed+Math.min(12,(raid.tier-1)*1.4),
-      shield:0,abilityAt:4.4,abilityRadius:raid.radius,abilityInterval:raid.interval,stunDuration:raid.stun,abilityUntil:0,
+      leak:Math.min(18,7+raid.tier),speed:spec.speed+Math.min(12,(raid.tier-1)*1.4),shield:0,
     });
+    if(type==='boss'||spec.ability){
+      const radius=raid?.radius??96;
+      Object.assign(enemy,{abilityAt:4.4,abilityRadius:radius,abilityInterval:raid?.interval??8,
+        stunRadius:radius+(spec.ability==='freeze-towers'?24:0),stunDuration:raid?.stun??1.2,abilityUntil:0});
+    }
     this.enemies.push(enemy);
     this.revision++;
     return enemy;
@@ -937,7 +942,7 @@ class Game {
         }
         this.effects.push({kind:'leak',x:e.x,y:e.y,text:'−'+e.leak,ttl:.8,max:.8});
         this.revision++;
-      }else if(e.ability&&e.age>=e.abilityAt){
+      }else if(e.age>=e.abilityAt){
         this.useBossAbility(e);
       }
     }
@@ -957,29 +962,32 @@ class Game {
 
   useBossAbility(enemy){
     enemy.abilityAt=enemy.age+enemy.abilityInterval;
-    let radius=enemy.size*1.7;
-    if(['stun','web','freeze-towers'].includes(enemy.ability)){
-      radius=enemy.abilityRadius;
-      const field={stun:'stunned',web:'webbed','freeze-towers':'frozen'}[enemy.ability];
-      const duration=enemy.ability==='web'?3:enemy.stunDuration;
-      const pads=this.pads;
-      for(const [index,tower] of this.towers.entries()){
-        if(!tower)continue;
-        const [x,y]=pads[index];
-        if(Math.hypot(x-enemy.x,y-enemy.y)<=radius)tower[field]=Math.max(tower[field],duration);
+    const {x,y,ability,abilityRadius,stunRadius,stunDuration,color}=enemy;
+    const pads=this.pads;
+    for(const [index,tower] of this.towers.entries()){
+      if(!tower)continue;
+      const [px,py]=pads[index];
+      const distance=Math.hypot(px-x,py-y);
+      if(distance<=stunRadius)tower.stunned=Math.max(tower.stunned,stunDuration);
+      if(distance<=abilityRadius){
+        if(ability==='web')tower.webbed=Math.max(tower.webbed,3);
+        if(ability==='freeze-towers')tower.frozen=Math.max(tower.frozen,stunDuration);
       }
-    }else if(enemy.ability==='barrier'){
+    }
+    this.effects.push({kind:'boss-pulse',x,y,radius:stunRadius,color,ttl:.68,max:.68});
+    if(ability==='freeze-towers'){
+      this.effects.push({kind:'ice-pulse',x,y,radius:abilityRadius,color,ttl:.68,max:.68});
+    }else if(ability==='barrier'){
       enemy.shield=enemy.maxShield;
-    }else if(enemy.ability==='rush'||enemy.ability==='shell'){
-      enemy.abilityUntil=enemy.age+(enemy.ability==='rush'?2.2:2.7);
-    }else if(enemy.ability==='blink'){
-      this.effects.push({kind:'boss-pulse',x:enemy.x,y:enemy.y,radius,color:enemy.color,ttl:.45,max:.45});
+    }else if(ability==='rush'||ability==='shell'){
+      enemy.abilityUntil=enemy.age+(ability==='rush'?2.2:2.7);
+    }else if(ability==='blink'){
       const routes=this.map.routes;
       const destination=Math.min(enemy.distance+56,routes[enemy.route].length-48);
       enemy.distance=Math.max(enemy.distance,destination);
       Object.assign(enemy,pointAt(enemy.distance,enemy.route,routes));
+      this.effects.push({kind:'boss-pulse',x:enemy.x,y:enemy.y,radius:enemy.size*1.7,color,ttl:.45,max:.45});
     }
-    this.effects.push({kind:enemy.ability==='freeze-towers'?'ice-pulse':'boss-pulse',x:enemy.x,y:enemy.y,radius,color:enemy.color,ttl:.68,max:.68});
     this.revision++;
   }
 
@@ -1030,18 +1038,18 @@ class Game {
       if(!tower) continue;
       const webbed=tower.webbed>0;
       if(webbed)tower.webbed=Math.max(0,tower.webbed-dt);
+      const stunned=tower.stunned>0;
+      if(stunned){
+        tower.stunned=Math.max(0,tower.stunned-dt);
+        if(!tower.stunned)this.revision++;
+      }
       if(tower.frozen>0){
         tower.frozen=Math.max(0,tower.frozen-dt);
         if(!tower.frozen)this.revision++;
         continue;
       }
       tower.cooldown=Math.max(0,tower.cooldown-dt*(this.boostTimer>0?1.8:1)*(webbed?.5:1)*towerRate);
-      if(tower.stunned>0){
-        tower.stunned=Math.max(0,tower.stunned-dt);
-        if(!tower.stunned)this.revision++;
-        continue;
-      }
-      if(tower.cooldown>0) continue;
+      if(stunned||tower.cooldown>0)continue;
       const [x,y]=pads[index];
       const stats=this.stats(tower);
       let target=null;
@@ -1355,7 +1363,7 @@ function drawEnemyModel(ctx,e,frozen){
     for(const y of [-r*.49,0,r*.49])stroke(ctx,[[-r*3.2,y],[-r*.65,y]],trail,1.7);
   }
   const frame=Math.floor(e.flying?e.age*13:e.distance/3.3)%8;
-  const charging=e.ability&&e.abilityAt-e.age<.85;
+  const charging=e.abilityAt-e.age<.85;
   const hardened=e.ability==='shell'&&e.abilityUntil>e.age;
   const casting=!!(charging||hardened||(e.type==='shaman'&&(e.healTimer<.35||e.healTimer>1.38)));
   const sprite=enemySprite(e.type,frame,casting);
@@ -1363,7 +1371,7 @@ function drawEnemyModel(ctx,e,frozen){
   if(e.boosted&&e.rage)stroke(ctx,[[-r*.8,-r*.6],[r*.18,-r*.93],[r*.92,-r*.38]],'#ffad72',1.7);
   ctx.restore();
   if(charging){
-    const radius=['stun','web','freeze-towers'].includes(e.ability)?e.abilityRadius:r*1.25;
+    const radius=e.stunRadius;
     ctx.save();ctx.setLineDash([9,7]);ctx.lineWidth=2.5;
     ctx.beginPath();ctx.arc(e.x,e.y,radius,0,Math.PI*2);ctx.strokeStyle=e.color;ctx.stroke();
     ctx.restore();
@@ -2271,7 +2279,11 @@ function loadProgress(storage,mode='campaign'){
       if(hp>enemy.maxHp||shield>enemy.maxShield)return null;
       const {route}=snapshot;
       const distance=olderSave&&route===4?snapshot.distance/oldDeepValleyLength*map.routes[route].length:snapshot.distance;
-      Object.assign(enemy,pick(snapshot,enemyFields),{distance,hp,shield},pointAt(distance,route,map.routes));
+      const restored=pick(snapshot,enemyFields);
+      if(snapshot.type==='boss'&&!isNonnegative(restored.abilityAt)){
+        restored.abilityAt=Math.max(enemy.abilityAt,snapshot.age+1.2);
+      }
+      Object.assign(enemy,restored,{distance,hp,shield},pointAt(distance,route,map.routes));
     }
     let gravityCleanup=null;
     if(endless&&game.towerCount('gravity')>ENDLESS_GRAVITY_LIMIT){
