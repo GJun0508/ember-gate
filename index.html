@@ -62,6 +62,8 @@ h1{font-size:26px;line-height:1.25;letter-spacing:.09em;font-weight:780}
 .slot:not(:disabled):hover,.slot.preview{background:#706140b8;border-color:#f4d398;color:#fff3cd}
 .slot.occupied{background:transparent;border-color:transparent}
 .slot.occupied:hover,.slot.occupied.preview{background:transparent;border:1px solid var(--gold)}
+.slot.occupied.needs-repair{border:1px solid #ffad6f;box-shadow:0 0 0 1px #51251e}
+.slot.needs-repair::after{content:"!";position:absolute;top:-5px;right:-5px;display:grid;place-items:center;width:15px;height:15px;border-radius:50%;border:1px solid #ffe0ae;background:#872f23;color:#fff0c8;font:bold 11px/1 system-ui;pointer-events:none}
 .slot:disabled{color:#e1d4a880}
 .slots.placing .slot:not(.occupied):not(:disabled){border-color:#f1cc86;background:#54472aab}
 .map-label{position:absolute;display:flex;align-items:center;gap:5px;background:#22291fe8;border:1px solid #a98b556e;border-radius:4px;padding:3px 6px;color:#eee3c4;font-size:clamp(8px,.85vw,12px);font-weight:700;letter-spacing:.03em;pointer-events:none;white-space:nowrap}
@@ -138,6 +140,7 @@ h1{font-size:26px;line-height:1.25;letter-spacing:.09em;font-weight:780}
 .inspect-stats>div{padding:6px;border:1px solid #4c5743;border-radius:6px;background:#2b3528}
 .inspect-stats dt{color:#c5cdb5;font-size:11px}
 .inspect-stats dd{margin:0;color:#f0d499;font-size:clamp(12px,1.5vw,16px);font-weight:750;font-variant-numeric:tabular-nums}
+.inspect-repair{margin:6px 0 8px;color:#ffc294;font-size:12px;font-weight:650}
 .upgrade-actions{display:grid;grid-template-columns:1fr 1fr;gap:6px}
 .upgrade-actions button{padding:7px;min-width:0;text-align:left;background:#30382a;border:1px solid #4c5743;border-radius:7px;font-size:11px}
 .upgrade-actions button:not(:disabled):hover{border-color:var(--gold)}
@@ -427,7 +430,7 @@ const ENEMIES = {
   frostking: {name:'凛冬之王',skill:'震荡眩晕附近炮台，并冻结内圈炮台',speed:35,color:'#a8e7ff',size:48,ability:'freeze-towers',snowAdapted:true},
 };
 const bossHealthMultiplier=2;
-const endlessTowerAttackNote='命中炮塔时随机降低伤害或射速 1 级，未升级炮塔直接摧毁';
+const endlessTowerAttackNote='命中炮塔时随机降低伤害或射速 1 级，受损后可维修，基础炮塔直接摧毁';
 const repeat = (count,type) => Array(count).fill(type);
 const WAVES = [
   {name:'荒野斥候', note:'基础步兵', queue:repeat(8,'grunt'), gap:.92},
@@ -729,7 +732,8 @@ class Game {
     if(!tower||(track!=='damage'&&track!=='speed')||tower[track]>=MAX_UPGRADE_LEVEL)return null;
     const spec=TOWERS[tower.type];
     const level=tower[track],base=spec.upgradeBase??spec.cost;
-    return Math.round((base*.53+level*19+base*.25*Math.max(0,level-2)**2)/5)*5;
+    const cost=Math.round((base*.53+level*19+base*.25*Math.max(0,level-2)**2)/5)*5;
+    return tower[track+'Lost']>0?Math.ceil(cost/2):cost;
   }
 
   unlockWave(type){
@@ -748,7 +752,7 @@ class Game {
     const spec=Object.hasOwn(TOWERS,type) ? TOWERS[type] : null;
     if(this.finished || !isSlot(index,this.map) || this.towers[index] || !spec || !this.canBuildType(type) || this.atTowerLimit(type) || this.gold<spec.cost) return false;
     this.gold-=spec.cost;
-    this.towers[index]={type,damage:0,speed:0,spent:spec.cost,cooldown:0,angle:-Math.PI/2,stunned:0,webbed:0,frozen:0};
+    this.towers[index]={type,damage:0,speed:0,damageLost:0,speedLost:0,spent:spec.cost,cooldown:0,angle:-Math.PI/2,stunned:0,webbed:0,frozen:0};
     this.onSound?.('build');
     this.revision++;
     return true;
@@ -758,8 +762,10 @@ class Game {
     const cost=this.upgradeCost(index,track);
     if(this.finished || cost===null || this.gold<cost) return false;
     this.gold-=cost;
-    this.towers[index][track]++;
-    this.towers[index].spent+=cost;
+    const tower=this.towers[index],lost=track+'Lost';
+    tower[track]++;
+    if(tower[lost]>0)tower[lost]--;
+    else tower.spent+=cost;
     this.onSound?.('upgrade');
     this.revision++;
     return true;
@@ -963,6 +969,7 @@ class Game {
   }
 
   useBossAbility(enemy){
+    if(enemy.type!=='boss'&&enemy.type!==this.waveInfo.boss?.type)return;
     enemy.abilityAt=enemy.age+enemy.abilityInterval;
     const {x,y,ability,abilityRadius,stunRadius,stunDuration,color}=enemy;
     const pads=this.pads;
@@ -980,6 +987,8 @@ class Game {
           }else{
             const track=damage>0&&(speed===0||Math.random()<.5)?'damage':'speed';
             tower[track]--;
+            const lost=track+'Lost';
+            tower[lost]++;
             text=track==='damage'?'伤害 −1 级':'射速 −1 级';
           }
           this.effects.push({kind:'tower-hit',x:px,y:py,text,destroyed,ttl:1.2,max:1.2});
@@ -2592,7 +2601,7 @@ const previousSlotCount=49;
 const oldDeepValleyLength=365;
 const legacyKey=mode=>mode==='campaign'?saveKey:saveKey+':'+mode;
 const storageKey=mode=>legacyKey(mode)+':v'+saveVersion;
-const towerFields=['type','damage','speed','spent','cooldown','angle','stunned','webbed','frozen'];
+const towerFields=['type','damage','speed','damageLost','speedLost','spent','cooldown','angle','stunned','webbed','frozen'];
 const enemyFields=['type','route','distance','hp','shield','age','slow','poison','poisonDamage','healTimer','boosted','abilityAt','abilityUntil'];
 const gameFields=['gold','lives','wave','kills','phase','spawned','spawnTimer'];
 
@@ -2636,6 +2645,7 @@ function validTower(tower,olderSave){
     Object.hasOwn(TOWERS,tower.type)?TOWERS[tower.type].cost:null;
   const maxLevel=olderSave?3:MAX_UPGRADE_LEVEL;
   return minimum!==null&&isInteger(tower.damage,0,maxLevel)&&isInteger(tower.speed,0,maxLevel)&&
+    isInteger(tower.damageLost??0,0,maxLevel-tower.damage)&&isInteger(tower.speedLost??0,0,maxLevel-tower.speed)&&
     isInteger(tower.spent,minimum)&&isNonnegative(tower.cooldown)&&Number.isFinite(tower.angle)&&
     isNonnegative(tower.stunned??0)&&isNonnegative(tower.webbed??0)&&isNonnegative(tower.frozen??0);
 }
@@ -2711,7 +2721,7 @@ function loadProgress(storage,mode='campaign'){
     let retiredRefund=0;
     state.towers.forEach((tower,index)=>{
       if(tower?.type==='venom')retiredRefund+=tower.spent;
-      else if(tower)game.towers[index]={...pick(tower,towerFields),stunned:tower.stunned??0,webbed:tower.webbed??0,frozen:tower.frozen??0};
+      else if(tower)game.towers[index]={...pick(tower,towerFields),damageLost:tower.damageLost??0,speedLost:tower.speedLost??0,stunned:tower.stunned??0,webbed:tower.webbed??0,frozen:tower.frozen??0};
     });
     game.gold+=retiredRefund;
     if(!legacy){
@@ -3049,6 +3059,7 @@ const render = createField(el('field'));
 const towerTypes = Object.keys(TOWERS);
 const towerKeys = '1234567890l';
 const tracks = {damage:'伤害',speed:'射速'};
+const towerNeedsRepair=tower=>!!tower&&(tower.damageLost>0||tower.speedLost>0);
 const compactControls=matchMedia('(max-width:800px), (pointer:coarse) and (max-width:1366px)');
 const phoneLayout=matchMedia('(max-width:640px)');
 const skillPanel=document.querySelector('.skill-panel');
@@ -3333,6 +3344,7 @@ upgradePanel.innerHTML=`<header><h3 id="inspect-title"></h3><button id="inspect-
   <div><dt>单体秒伤</dt><dd id="inspect-dps"></dd></div>
   <div><dt>射程</dt><dd id="inspect-range"></dd></div>
 </dl>
+<p id="inspect-repair" class="inspect-repair" hidden></p>
 <div class="upgrade-actions">${Object.entries(tracks).map(([track,label])=>`<button type="button" id="upgrade-${track}"><strong>${label}升级</strong><span></span></button>`).join('')}</div>
 <button id="sell-tower" class="sell-tower" type="button">${icon('salvage')} 拆除防御塔 <strong></strong></button>`;
 el('inspect-close').addEventListener('click',()=>{
@@ -3343,8 +3355,9 @@ el('inspect-close').addEventListener('click',()=>{
 });
 for(const [track,label] of Object.entries(tracks)){
   el('upgrade-'+track).addEventListener('click',()=>{
+    const repairing=game.towers[inspected]?.[track+'Lost']>0;
     if(game.upgrade(inspected,track)){
-      showNotice(label+'已升级');
+      showNotice(label+(repairing?'已维修 · 恢复 1 级':'已升级'));
       saveProgress();
     }
     sync();
@@ -3752,8 +3765,10 @@ function sync(){
     }
     button.textContent=tower?'':'＋';
     button.classList.toggle('occupied',!!tower);
+    const damaged=towerNeedsRepair(tower);
+    button.classList.toggle('needs-repair',damaged);
     button.classList.toggle('preview',inspected===index||touchPad===index);
-    button.setAttribute('aria-label',tower ? `建造点 ${index+1}，${TOWERS[tower.type].name}，查看升级与拆除` : `空建造点 ${index+1}${covers?'，射程覆盖本波路线':''}`);
+    button.setAttribute('aria-label',tower ? `建造点 ${index+1}，${TOWERS[tower.type].name}，${damaged?'受损，点击维修':'查看升级与拆除'}` : `空建造点 ${index+1}${covers?'，射程覆盖本波路线':''}`);
     button.disabled=game.finished;
   });
   const tower=game.towers[inspected];
@@ -3767,17 +3782,21 @@ function sync(){
     el('inspect-rate').textContent=formatRate(stats.rate);
     el('inspect-dps').textContent=formatDamage(stats.damage*stats.rate);
     el('inspect-range').textContent=formatDamage(stats.range);
+    const repairHint=el('inspect-repair');
+    repairHint.hidden=!towerNeedsRepair(tower);
+    repairHint.textContent=repairHint.hidden?'':'炮塔受到 Boss 攻击 · 维修可恢复失去的等级';
     el('sell-tower').querySelector('strong').textContent='退回 '+game.sellValue(inspected)+' 金';
     el('sell-tower').title='退回建造与升级总花费的 70%';
     for(const track of Object.keys(tracks)){
+      const lost=tower[track+'Lost'];
       const cost=game.upgradeCost(inspected,track);
       const button=el('upgrade-'+track);
       button.disabled=cost===null||gold<cost;
       const next=cost===null?stats:game.stats({...tower,[track]:tower[track]+1});
       const before=track==='damage'?formatDamage(stats.damage):towerNumber.format(stats.rate);
       const after=track==='damage'?formatDamage(next.damage):towerNumber.format(next.rate);
-      button.querySelector('strong').textContent=tracks[track]+' '+before+(cost===null?'':' → '+after)+(track==='speed'?' 次/秒':'');
-      button.querySelector('span').textContent=cost===null?`Lv.${tower[track]} · 已满级`:`Lv.${tower[track]} → ${tower[track]+1} · ${formatDamage(cost)} 金`;
+      button.querySelector('strong').textContent=(lost?'维修':'')+tracks[track]+' '+before+(cost===null?'':' → '+after)+(track==='speed'?' 次/秒':'');
+      button.querySelector('span').textContent=cost===null?`Lv.${tower[track]} · 已满级`:`Lv.${tower[track]} → ${tower[track]+1} · ${formatDamage(cost)} 金${lost?` · 待修 ${lost} 级`:''}`;
     }
   }
   if(game.finished&&!el('end-dialog').open){
@@ -3809,7 +3828,9 @@ function frame(now){
     }
     autoRemaining=advanceAutoWave(game,autoRemaining,elapsed,autoBattle,true);
     if(remainingSecond!==Math.ceil(autoRemaining)&&game.phase==='between')sync();
-    if(game.phase!==phase||game.towerHitRevision!==towerHitRevision||(game.phase==='active'&&now-lastSave>=1000))saveProgress();
+    const towerHit=game.towerHitRevision!==towerHitRevision;
+    if(towerHit)showNotice(game.towers.some(towerNeedsRepair)?'Boss 攻击了炮塔 · 点击带感叹号的炮塔维修':'Boss 摧毁了炮塔 · 可在空塔位重建');
+    if(game.phase!==phase||towerHit||(game.phase==='active'&&now-lastSave>=1000))saveProgress();
   }
   if(renderedRevision!==game.revision)sync();
   else if(game.phase==='active'){
