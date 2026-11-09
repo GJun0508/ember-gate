@@ -397,6 +397,8 @@ const BASE_LIVES=20;
 const FORTIFICATION_HEALTH=5;
 const FORTIFICATION_COSTS=[2000,3500,5000,6500,8000];
 const ENDLESS_GRAVITY_LIMIT=2;
+const ENDLESS_CHECKPOINT_WAVE=100;
+const ENDLESS_CHECKPOINT_GOLD=340000;
 const TOWERS = {
   arrow: {name:'弩塔', tag:'单体 · 快速', cost:70, range:128, damage:17, rate:1.25, color:'#dac58e', description:'发射弩箭，持续打击最靠近要塞的敌人。'},
   cannon: {name:'重炮塔', tag:'范围 · 溅射', cost:125, range:154, damage:41, rate:.56, splash:66, color:'#ef9b68', description:'炮弹爆炸，对目标及附近的敌人造成伤害。'},
@@ -718,6 +720,19 @@ class Game {
     this.spawnTimer=0;
     this.towerHitRevision=0;
     this.revision=(this.revision??0)+1;
+  }
+
+  canRestartAtEndlessCheckpoint(bestWaves){
+    return this.mode==='endless'&&this.phase==='lost'&&bestWaves>130;
+  }
+
+  restartAtEndlessCheckpoint(bestWaves){
+    if(!this.canRestartAtEndlessCheckpoint(bestWaves))return false;
+    this.reset();
+    this.wave=ENDLESS_CHECKPOINT_WAVE-1;
+    this.phase='between';
+    this.gold=ENDLESS_CHECKPOINT_GOLD;
+    return true;
   }
 
   stats(tower){
@@ -3011,8 +3026,12 @@ function setupLeaderboard(records,storage){
 
 const AUTO_WAVE_DELAY=2.5;
 
+function preparingEndlessCheckpoint(game){
+  return game.mode==='endless'&&game.phase==='between'&&game.stage===ENDLESS_CHECKPOINT_WAVE&&game.spawned===0;
+}
+
 function advanceAutoWave(game,remaining,elapsed,enabled,canAdvance){
-  if(game.phase!=='between'||!enabled)return AUTO_WAVE_DELAY;
+  if(game.phase!=='between'||!enabled||preparingEndlessCheckpoint(game))return AUTO_WAVE_DELAY;
   if(!canAdvance)return remaining;
   const next=Math.max(0,remaining-elapsed);
   if(next>0)return next;
@@ -3449,10 +3468,14 @@ function toggleWave(){
   if(game.wave!==before)flashWaveEntrances();
 }
 
-function reset(){
+function reset(checkpoint=false){
   battleAudio.stop();
   records.consider(game);
-  game.reset();
+  if(checkpoint){
+    if(!game.restartAtEndlessCheckpoint(records.get('endless').waves))return;
+  }else{
+    game.reset();
+  }
   chosen=null;
   inspected=null;
   touchPad=null;
@@ -3549,8 +3572,9 @@ el('speed').addEventListener('click',()=>{
   saveProgress();
   sync();
 });
-el('end-reset').addEventListener('click',reset);
-el('confirm-reset').addEventListener('click',reset);
+el('end-reset').addEventListener('click',()=>reset());
+el('end-checkpoint').addEventListener('click',()=>reset(true));
+el('confirm-reset').addEventListener('click',()=>reset());
 el('cancel-reset').addEventListener('click',()=>el('reset-dialog').close());
 el('end-dialog').addEventListener('cancel',event=>event.preventDefault());
 el('reset-top').addEventListener('click',()=>{
@@ -3712,7 +3736,7 @@ function sync(){
   start.disabled=game.finished;
   start.querySelector('use').setAttribute('href',phase==='active'&&!paused?'#pause':'#play');
   start.querySelector('span').textContent=game.finished?'战斗结束':phase==='active'?(paused?'继续战斗':'暂停战斗'):
-    `开始第 ${stage} 波${phase==='between'&&autoBattle?` · ${Math.ceil(autoRemaining)} 秒`:''}`;
+    `开始第 ${stage} 波${phase==='between'&&autoBattle&&!preparingEndlessCheckpoint(game)?` · ${Math.ceil(autoRemaining)} 秒`:''}`;
   const autoButton=el('auto-wave');
   autoButton.disabled=game.finished;
   autoButton.textContent=`连续战斗 · ${autoBattle?'开':'关'}`;
@@ -3807,6 +3831,10 @@ function sync(){
       `你击退了所有 ${game.waveCount} 波敌军。${game.combatTime>0?` 通关用时 ${formatRunTime(Math.round(game.combatTime*1000))}。`:''}`:
       '敌军在第 '+wave+' 波攻破了要塞。';
     el('end-stats').innerHTML=`<span><strong>${game.kills}</strong>击杀</span><span><strong>${lives}</strong>剩余生命</span><span><strong>${gold}</strong>剩余黄金</span>`;
+    const checkpoint=el('end-checkpoint');
+    checkpoint.hidden=!game.canRestartAtEndlessCheckpoint(record.waves);
+    checkpoint.textContent=`从第 ${ENDLESS_CHECKPOINT_WAVE} 波开始 · ${formatDamage(ENDLESS_CHECKPOINT_GOLD)} 金币`;
+    el('end-reset').lastChild.textContent=checkpoint.hidden?' 再玩一局':' 从第 1 波开始';
     el('end-dialog').showModal();
   }
 }
@@ -3987,6 +4015,7 @@ requestAnimationFrame(frame);
   <div id="end-stats" class="end-stats"></div>
   <button id="end-rank" class="speed-button end-mode" type="button">个人纪录与排行榜</button>
   <button id="end-mode" class="speed-button end-mode" type="button">进入无尽模式</button>
+  <button id="end-checkpoint" class="speed-button end-mode" type="button" hidden></button>
   <button id="end-reset" class="primary" type="button"><svg><use href="#reset"/></svg> 再玩一局</button>
 </dialog>
 <dialog id="reset-dialog" class="dialog" aria-labelledby="reset-title" aria-describedby="reset-detail">
