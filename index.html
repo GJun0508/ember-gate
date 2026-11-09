@@ -165,6 +165,9 @@ kbd{display:inline-block;background:#252b22;color:#cbd0ba;border:1px solid #444c
 .dialog h2{font-size:31px;margin:3px 0}
 .dialog p{color:var(--muted);margin:3px 0 16px}
 .dialog .primary{width:100%}
+#study-dialog::backdrop{background:#080b08de}
+#study-title{font-size:clamp(23px,6vw,30px)}
+#study-enter{min-height:44px;font-variant-numeric:tabular-nums}
 .dialog-actions{display:flex;gap:8px}
 .record-summary{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:12px;padding:9px 10px;border:1px solid #4d4b37;border-radius:8px;background:#28291e}
 .record-summary strong,.record-summary span{display:block}
@@ -3291,6 +3294,44 @@ function advanceAutoWave(game,remaining,elapsed,enabled,canAdvance){
 
 const el = id => document.getElementById(id);
 const icon = name => `<svg aria-hidden="true"><use href="#${name}"/></svg>`;
+const studyDialog=el('study-dialog');
+const studyEnter=el('study-enter');
+let studyRemaining=3000;
+let studyVisibleSince=null;
+
+function showStudyReminder(){
+  studyRemaining=3000;
+  studyVisibleSince=null;
+  studyEnter.disabled=true;
+  studyEnter.textContent='3 秒后可进入';
+  if(!studyDialog.open)studyDialog.showModal();
+}
+
+function studyTimeLeft(now){
+  return Math.max(0,studyRemaining-(studyVisibleSince===null?0:Math.max(0,now-studyVisibleSince)));
+}
+
+function updateStudyCountdown(now){
+  if(!studyDialog.open||!studyEnter.disabled||document.hidden)return;
+  studyVisibleSince??=now;
+  const seconds=Math.ceil(studyTimeLeft(now)/1000);
+  const label=seconds?`${seconds} 秒后可进入`:'进入游戏';
+  if(studyEnter.textContent!==label)studyEnter.textContent=label;
+  studyEnter.disabled=seconds>0;
+}
+
+studyDialog.addEventListener('cancel',event=>event.preventDefault());
+studyDialog.addEventListener('keydown',event=>{
+  if(event.key==='Escape')event.preventDefault();
+});
+studyEnter.addEventListener('click',()=>{
+  if(studyEnter.disabled)return;
+  studyDialog.close();
+  sync();
+});
+window.addEventListener('pageshow',event=>{
+  if(event.persisted)showStudyReminder();
+});
 let progressStorage=null;
 try{progressStorage=window.localStorage;}catch{}
 const modeKey='ember-gate-defense-td:mode';
@@ -3379,7 +3420,12 @@ function pauseForBackground(){
   sync();
 }
 document.addEventListener('visibilitychange',()=>{
-  if(document.hidden)pauseForBackground();
+  if(!document.hidden)return;
+  if(studyDialog.open&&studyEnter.disabled){
+    studyRemaining=studyTimeLeft(performance.now());
+    studyVisibleSince=null;
+  }
+  pauseForBackground();
 });
 window.addEventListener('pagehide',pauseForBackground);
 
@@ -4128,7 +4174,7 @@ function sync(){
       button.querySelector('span').textContent=cost===null?`Lv.${tower[track]} · 已满级`:`Lv.${tower[track]} → ${tower[track]+1} · ${formatDamage(cost)} 金${lost?` · 待修 ${lost} 级`:''}`;
     }
   }
-  if(game.finished&&!el('end-dialog').open){
+  if(game.finished&&!studyDialog.open&&!el('end-dialog').open){
     el('end-label').textContent=phase==='won'?'VICTORY':'DEFEAT';
     el('end-title').textContent=phase==='won'?'防线守住了！':'要塞失守';
     el('end-mode').textContent={campaign:'进入雪地战役',snow:'进入无尽模式',endless:'返回战役'}[mode];
@@ -4150,7 +4196,8 @@ function frame(now){
   const elapsed=Math.min((now-previous)/1000,.05);
   previous=now;
   const before=game.wave;
-  if(!paused&&!document.hidden&&!el('reset-dialog').open&&!el('rank-dialog').open){
+  updateStudyCountdown(now);
+  if(!studyDialog.open&&!paused&&!document.hidden&&!el('reset-dialog').open&&!el('rank-dialog').open){
     const phase=game.phase;
     const towerHitRevision=game.towerHitRevision;
     const remainingSecond=Math.ceil(autoRemaining);
@@ -4188,6 +4235,7 @@ function restoredLabel(run,gravityCleanup=run.gravityCleanup){
   return messages.join(' · ');
 }
 
+showStudyReminder();
 sync();
 if(savedProgress)el('save-status').textContent=restoredLabel(savedProgress);
 else if(!progressStorage)el('save-status').textContent='自动存档不可用';
@@ -4320,6 +4368,14 @@ requestAnimationFrame(frame);
 </div>
 
 <section id="upgrade" class="upgrade upgrade-popover" aria-labelledby="inspect-title" hidden></section>
+<dialog id="study-dialog" class="dialog" closedby="none" aria-labelledby="study-title" aria-describedby="study-detail">
+  <div class="dialog-icon"><svg aria-hidden="true"><use href="#crest"/></svg></div>
+  <div class="eyebrow">游戏提醒</div>
+  <h2 id="study-title" tabindex="-1" autofocus>好好学习，切勿上瘾</h2>
+  <p id="study-detail">先完成学习任务，再适度游戏。记得按时休息。</p>
+  <button id="study-enter" class="primary" type="button" disabled>3 秒后可进入</button>
+</dialog>
+
 <dialog id="end-dialog" class="dialog" aria-labelledby="end-title" aria-describedby="end-detail">
   <div class="dialog-icon"><svg><use href="#crest"/></svg></div>
   <div id="end-label" class="eyebrow"></div><h2 id="end-title"></h2><p id="end-detail"></p>
