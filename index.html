@@ -427,6 +427,7 @@ const ENEMIES = {
   frostking: {name:'凛冬之王',skill:'震荡眩晕附近炮台，并冻结内圈炮台',speed:35,color:'#a8e7ff',size:48,ability:'freeze-towers',snowAdapted:true},
 };
 const bossHealthMultiplier=2;
+const endlessTowerAttackNote='命中炮塔时随机降低伤害或射速 1 级，未升级炮塔直接摧毁';
 const repeat = (count,type) => Array(count).fill(type);
 const WAVES = [
   {name:'荒野斥候', note:'基础步兵', queue:repeat(8,'grunt'), gap:.92},
@@ -550,14 +551,14 @@ function waveFor(mode,number,legacy=false,soloRaid=false){
     const escortPool=raidEscortPools[Math.min(tier,raidEscortPools.length)-1];
     const escortCount=soloRaid?0:Math.min(15,3+2*tier)+Math.min(6,Math.floor(lateWaves/5));
     const escorts=Array.from({length:escortCount},(_,index)=>escortPool[index%escortPool.length]);
-    endlessWave={name:spec.name,note:spec.skill+lateNote,queue:[type,...escorts],gap:1.25,lanes:5,route,boss,mobHealthMultiplier};
+    endlessWave={name:spec.name,note:spec.skill+' · '+endlessTowerAttackNote+lateNote,queue:[type,...escorts],gap:1.25,lanes:5,route,boss,mobHealthMultiplier};
     return endlessWave;
   }
   const pool=['grunt','runner','shield','shade','brute','shaman','runner','brute'];
   const count=Math.min(66,20+number*3)+Math.min(18,Math.ceil(lateWaves/2));
   const boss=legacy&&number%5===0;
   const queue=Array.from({length:count},(_,i)=>boss&&i%19===10?'boss':pool[(i*3+Math.floor(i/5)+number)%pool.length]);
-  const note=boss?'首领波 · 五路进攻':'五路进攻 · 敌军持续增强';
+  const note=boss?'首领波 · 五路进攻 · '+endlessTowerAttackNote:'五路进攻 · 敌军持续增强';
   const gap=Math.max(.27,.63-number*.018)-Math.min(.06,lateWaves*.002);
   endlessWave={name:boss?'无尽 · 巨兽攻势':'无尽 · 裂谷守卫',note:note+lateNote,queue,gap,lanes:5,mobHealthMultiplier};
   return endlessWave;
@@ -712,6 +713,7 @@ class Game {
     this.weather=null;
     this.spawned=0;
     this.spawnTimer=0;
+    this.towerHitRevision=0;
     this.revision=(this.revision??0)+1;
   }
 
@@ -968,7 +970,24 @@ class Game {
       if(!tower)continue;
       const [px,py]=pads[index];
       const distance=Math.hypot(px-x,py-y);
-      if(distance<=stunRadius)tower.stunned=Math.max(tower.stunned,stunDuration);
+      if(distance<=stunRadius){
+        if(this.mode==='endless'){
+          const {damage,speed}=tower;
+          const destroyed=damage===0&&speed===0;
+          let text='炮塔摧毁';
+          if(destroyed){
+            this.towers[index]=null;
+          }else{
+            const track=damage>0&&(speed===0||Math.random()<.5)?'damage':'speed';
+            tower[track]--;
+            text=track==='damage'?'伤害 −1 级':'射速 −1 级';
+          }
+          this.effects.push({kind:'tower-hit',x:px,y:py,text,destroyed,ttl:1.2,max:1.2});
+          this.towerHitRevision++;
+          if(destroyed)continue;
+        }
+        tower.stunned=Math.max(tower.stunned,stunDuration);
+      }
       if(distance<=abilityRadius){
         if(ability==='web')tower.webbed=Math.max(tower.webbed,3);
         if(ability==='freeze-towers')tower.frozen=Math.max(tower.frozen,stunDuration);
@@ -2020,7 +2039,14 @@ function drawEffect(ctx,e,detailed=true){
   const fade=e.ttl/e.max,t=1-fade;
   const {kind,x,y,tx,ty}=e;
   ctx.save();ctx.globalAlpha=fade;ctx.lineCap='round';ctx.lineJoin='round';
-  if(kind==='coin'||kind==='leak'||kind==='card'){
+  if(kind==='coin'||kind==='leak'||kind==='card'||kind==='tower-hit'){
+    if(kind==='tower-hit'){
+      if(t<.32)flash(ctx,x,y,e.destroyed?34:21,'#ff825a');
+      if(e.destroyed){
+        smokePuff(ctx,x,y-t*16,15+t*15,'#63504c',x*.021);
+        effectDots(ctx,x,y,14+t*31,t,9,'#ffbe8f');
+      }
+    }
     ctx.font='bold 14px system-ui';ctx.textAlign='center';ctx.lineWidth=3;ctx.strokeStyle='#352e20';
     const labelY=y-15-t*20;
     ctx.strokeText(e.text,x,labelY);
@@ -3119,7 +3145,8 @@ function getWavePreview(map,info){
   for(const type of info.queue)counts.set(type,(counts.get(type)??0)+1);
   wavePreview={map,info,routes,counts};
   const roster=[...counts].map(([type,count])=>ENEMIES[type].name+' ×'+count).join('、');
-  el('wave-summary').textContent=roster+' · '+routes.map(i=>map.routes[i].name).join('、');
+  const towerWarning=game.mode==='endless'&&(info.boss||info.queue.includes('boss'))?' · 首领会破坏炮塔':'';
+  el('wave-summary').textContent=roster+' · '+routes.map(i=>map.routes[i].name).join('、')+towerWarning;
   return wavePreview;
 }
 
@@ -3773,6 +3800,7 @@ function frame(now){
   const before=game.wave;
   if(!paused&&!document.hidden&&!el('reset-dialog').open&&!el('rank-dialog').open){
     const phase=game.phase;
+    const towerHitRevision=game.towerHitRevision;
     const remainingSecond=Math.ceil(autoRemaining);
     accumulator+=elapsed*speed;
     while(accumulator>=1/60){
@@ -3781,7 +3809,7 @@ function frame(now){
     }
     autoRemaining=advanceAutoWave(game,autoRemaining,elapsed,autoBattle,true);
     if(remainingSecond!==Math.ceil(autoRemaining)&&game.phase==='between')sync();
-    if(game.phase!==phase||(game.phase==='active'&&now-lastSave>=1000))saveProgress();
+    if(game.phase!==phase||game.towerHitRevision!==towerHitRevision||(game.phase==='active'&&now-lastSave>=1000))saveProgress();
   }
   if(renderedRevision!==game.revision)sync();
   else if(game.phase==='active'){
