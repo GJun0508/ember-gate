@@ -421,7 +421,7 @@ const ENEMIES = {
   runner: {name:'疾行者', skill:'周期冲刺', hp:29, speed:102, bounty:11, leak:1, color:'#d1af68', size:9, dash:true},
   brute: {name:'铁甲兽', skill:'抵挡 30% 普通伤害', hp:108, speed:53, bounty:22, leak:2, color:'#a787a7', size:15, armor:.30},
   shield: {name:'盾卫', skill:'护盾吸收伤害，破甲可穿透', hp:64, speed:65, bounty:18, leak:2, color:'#96b8c6', size:13, barrier:42},
-  shaman: {name:'祭司', skill:'周期治疗周围的其他怪物', hp:53, speed:62, bounty:21, leak:1, color:'#b3c78d', size:12, heal:true},
+  shaman: {name:'祭司', skill:'登场 2 秒后治疗附近友军，之后每 3 秒治疗一次', hp:53, speed:62, bounty:21, leak:1, color:'#b3c78d', size:12, healInterval:3},
   shade: {name:'影兽', skill:'减速持续时间缩短 70%', hp:46, speed:117, bounty:16, leak:1, color:'#c9b5e0', size:10, tenacity:.7},
   boss: {name:'余烬巨兽', skill:'震地眩晕附近炮台，半血后狂暴提速', hp:1150, speed:48, bounty:130, leak:5, color:'#ed8b5c', size:23, rage:true},
   colossus: {name:'震岩巨像',skill:'震地波会短暂眩晕附近炮台',speed:38,color:'#f6a467',size:44,ability:'stun'},
@@ -893,7 +893,7 @@ class Game {
     const bounty=spec.ability?raid.bounty:Math.round(spec.bounty*(this.mode==='endless'?
       (type==='boss'?endlessRewardMultiplier(this.wave):endlessMobRewardMultiplier(this.wave)):1));
     const enemy={...spec,type,route,distance:0,maxHp,hp:maxHp,maxShield,shield:maxShield,bounty,age:0,slow:0,stunned:0,
-      poison:0,poisonDamage:0,healTimer:1.15,boosted:false,...pointAt(0,route,this.map.routes)};
+      poison:0,poisonDamage:0,healTimer:spec.healInterval?2:0,boosted:false,...pointAt(0,route,this.map.routes)};
     if(spec.ability)Object.assign(enemy,{
       leak:Math.min(18,7+raid.tier),speed:spec.speed+Math.min(12,(raid.tier-1)*1.4),shield:0,
     });
@@ -996,7 +996,7 @@ class Game {
       e.stunned=Math.max(0,e.stunned-dt);
       e.age+=actingTime;
       e.slow=Math.max(0,e.slow-dt);
-      if(e.heal)e.healTimer-=actingTime;
+      if(e.healInterval)e.healTimer-=actingTime;
       e.boosted=!!((e.dash&&e.age%3.8>2.65)||(e.rage&&e.hp<=e.maxHp/2)||(e.ability==='rush'&&e.abilityUntil>e.age));
       e.distance+=e.speed*actingTime*(this.freezeTimer>0?.15:e.slow>0?.55:1)*(e.boosted ? 1.60 : 1)*(e.snowAdapted?1:moveRate);
       Object.assign(e,pointAt(e.distance,e.route,routes));
@@ -1016,8 +1016,8 @@ class Game {
       }
     }
     for(const healer of this.enemies){
-      if(!healer.heal||healer.hp<=0||healer.stunned>0||healer.healTimer>0)continue;
-      healer.healTimer+=1.8;
+      if(!healer.healInterval||healer.hp<=0||healer.stunned>0||healer.healTimer>0)continue;
+      healer.healTimer+=healer.healInterval;
       for(const ally of this.enemies){
         if(ally!==healer&&ally.hp>0&&!inGravityField(ally)&&Math.hypot(ally.x-healer.x,ally.y-healer.y)<=84){
           ally.hp=Math.min(ally.maxHp,ally.hp+ally.maxHp*.13);
@@ -1450,7 +1450,7 @@ function drawEnemyModel(ctx,e,frozen){
   const frame=Math.floor(e.flying?e.age*13:e.distance/3.3)%8;
   const charging=e.abilityAt-e.age<.85;
   const hardened=e.ability==='shell'&&e.abilityUntil>e.age;
-  const casting=!!(charging||hardened||(e.type==='shaman'&&(e.healTimer<.35||e.healTimer>1.38)));
+  const casting=!!(charging||hardened||(e.healInterval&&(e.healTimer<.35||e.healTimer>e.healInterval-.42)));
   const sprite=enemySprite(e.type,frame,casting);
   ctx.drawImage(sprite,-r*1.5,-r*1.5,r*3,r*3);
   if(e.boosted&&e.rage)stroke(ctx,[[-r*.8,-r*.6],[r*.18,-r*.93],[r*.92,-r*.38]],'#ffad72',1.7);
