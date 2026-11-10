@@ -237,6 +237,13 @@ kbd{display:inline-block;background:#252b22;color:#cbd0ba;border:1px solid #444c
 .skill-panel h2{font-size:17px}
 .skill-panel p{font-size:11px;color:#bbc3aa;text-align:right}
 .skill-hand{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:7px}
+.late-arsenal{margin-top:12px;padding-top:10px;border-top:1px solid #726143}
+.late-arsenal h3{margin:0 0 7px;color:#ffe0a1;font-size:13px}
+.late-skill-hand{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px}
+.late-skill{display:grid;grid-template-rows:auto 1fr auto;gap:5px;min-width:0}
+.late-skill small{color:#d8cbb1;font-size:11px;line-height:1.4}
+.late-skill>.speed-button{min-height:38px;padding:5px;color:#ffe0a1;font-size:11px}
+.late-skill>.speed-button:disabled{opacity:.55}
 .sidebar .skill-panel header{display:block}
 .sidebar .skill-panel p{margin-top:3px;text-align:left}
 .sidebar .skill-hand{grid-template-columns:repeat(2,minmax(0,1fr))}
@@ -401,6 +408,8 @@ const SKILLS={
   freeze:{name:'全域冻结',description:'全场敌人减速 85%，持续 4 秒。',color:'#99d2e0'},
   repair:{name:'要塞急修',description:'恢复 5 点要塞生命，最多恢复至当前生命上限。',color:'#b5d49e'},
   overdrive:{name:'火力过载',description:'所有炮台射速提升 80%，持续 9 秒。',color:'#e8cc8c'},
+  barrage:{name:'轨道歼灭',description:'打击场上所有敌人，造成小怪最大生命的 40%、Boss 最大生命的 12% 的穿透伤害。',color:'#ffab81',price:350000,mobDamage:.40,bossDamage:.12},
+  surge:{name:'全线超载',description:'所有炮台射速提升至 2.5 倍，持续 16 秒。与火力过载互斥。',color:'#fce19d',price:500000,rate:2.5,duration:16},
 };
 const CARD_LIMIT=5;
 const MAX_UPGRADE_LEVEL=6;
@@ -412,6 +421,8 @@ const ENDLESS_CHECKPOINT_WAVE=100;
 const ENDLESS_CHECKPOINT_MIN_BEST=131;
 const ENDLESS_CHECKPOINT_GOLD=340000;
 const TOWER_ASCENSION={afterWave:150,cost:100000,damage:2,rate:1.5,range:1.15};
+const ENDLESS_ARSENAL_WAVE=200;
+const TOWER_REINFORCEMENT={maxLevel:12,baseCost:150000,costStep:75000,damagePerLevel:.15};
 const TOWERS = {
   arrow: {name:'弩塔', tag:'单体 · 快速', cost:70, range:128, damage:17, rate:1.25, color:'#dac58e', description:'发射弩箭，持续打击最靠近要塞的敌人。'},
   cannon: {name:'重炮塔', tag:'范围 · 溅射', cost:125, range:154, damage:41, rate:.56, splash:66, color:'#ef9b68', description:'炮弹爆炸，对目标及附近的敌人造成伤害。'},
@@ -432,6 +443,8 @@ const ENEMIES = {
   shield: {name:'盾卫', skill:'护盾吸收伤害，破甲可穿透', hp:64, speed:65, bounty:18, leak:2, color:'#96b8c6', size:13, barrier:42},
   shaman: {name:'祭司', skill:'登场 2 秒后治疗附近友军，之后每 3 秒治疗一次', hp:53, speed:62, bounty:21, leak:1, color:'#b3c78d', size:12, healInterval:3},
   shade: {name:'影兽', skill:'减速持续时间缩短 70%', hp:46, speed:117, bounty:16, leak:1, color:'#c9b5e0', size:10, tenacity:.7},
+  ironward: {name:'铁幕卫士',skill:'重型护盾吸收伤害，装甲抵挡 45% 普通伤害',hp:138,speed:48,bounty:30,leak:3,color:'#e0906a',size:17,armor:.45,barrier:95},
+  riftstalker: {name:'裂隙猎手',skill:'高速冲刺，减速持续时间缩短 85%',hp:56,speed:124,bounty:24,leak:2,color:'#74e3d9',size:12,dash:true,tenacity:.85},
   boss: {name:'余烬巨兽', skill:'震地眩晕附近炮台，半血后狂暴提速', hp:1150, speed:48, bounty:130, leak:5, color:'#ed8b5c', size:23, rage:true},
   colossus: {name:'震岩巨像',skill:'震地波会短暂眩晕附近炮台',speed:38,color:'#f6a467',size:44,ability:'stun'},
   mirrorbeast: {name:'霜镜巨兽',skill:'眩晕附近炮台并生成寒晶护盾，穿透攻击可绕过护盾',speed:40,color:'#a5e3ff',size:42,ability:'barrier'},
@@ -579,13 +592,19 @@ function waveFor(mode,number,legacy=false,soloRaid=false){
     endlessWave={name:spec.name,note:spec.skill+' · '+endlessTowerAttackNote+lateNote,queue:[type,...escorts],gap:1.25,lanes:5,route,boss,mobHealthMultiplier};
     return endlessWave;
   }
+  const elites=number>ENDLESS_ARSENAL_WAVE;
   const pool=['grunt','runner','shield','shade','brute','shaman','runner','brute'];
   const count=Math.min(endlessBaseWaveEnemyCap,20+number*3)+endlessReinforcements(number);
   const boss=legacy&&number%5===0;
-  const queue=Array.from({length:count},(_,i)=>boss&&i%19===10?'boss':pool[(i*3+Math.floor(i/5)+number)%pool.length]);
+  const queue=Array.from({length:count},(_,i)=>{
+    if(boss&&i%19===10)return 'boss';
+    if(elites&&i%8===4)return 'ironward';
+    if(elites&&i%8===6)return 'riftstalker';
+    return pool[(i*3+Math.floor(i/5)+number)%pool.length];
+  });
   const note=boss?'首领波 · 五路进攻 · '+endlessTowerAttackNote:'五路进攻 · 敌军持续增强';
   const gap=Math.max(.27,.63-number*.018)-Math.min(.06,lateWaves*.002);
-  endlessWave={name:boss?'无尽 · 巨兽攻势':'无尽 · 裂谷守卫',note:note+lateNote,queue,gap,lanes:5,mobHealthMultiplier};
+  endlessWave={name:boss?'无尽 · 巨兽攻势':'无尽 · 裂谷守卫',note:note+lateNote+(elites?' · 铁幕卫士与裂隙猎手':''),queue,gap,lanes:5,mobHealthMultiplier};
   return endlessWave;
 }
 
@@ -742,6 +761,7 @@ class Game {
     this.cards=Object.fromEntries(Object.keys(SKILLS).map(key=>[key,0]));
     this.freezeTimer=0;
     this.boostTimer=0;
+    this.boostRate=1.8;
     this.weather=null;
     this.spawned=0;
     this.spawnTimer=0;
@@ -767,7 +787,8 @@ class Game {
     const damageScale=1.46**Math.min(3,tower.damage)*1.24**Math.max(0,tower.damage-3);
     const rateScale=1.30**Math.min(3,tower.speed)*1.18**Math.max(0,tower.speed-3);
     const {ascended}=tower;
-    return {...type,damage:Math.round(type.damage*damageScale)*(ascended?TOWER_ASCENSION.damage:1),
+    const damage=Math.round(type.damage*damageScale)*(ascended?TOWER_ASCENSION.damage:1);
+    return {...type,damage:Math.round(damage*(1+(tower.reinforcement??0)*TOWER_REINFORCEMENT.damagePerLevel)),
       rate:type.rate*rateScale*(ascended?TOWER_ASCENSION.rate:1),
       range:ascended?Math.round(type.range*TOWER_ASCENSION.range):type.range};
   }
@@ -784,6 +805,28 @@ class Game {
     tower.cooldown/=rate;
     const [x,y]=this.pads[index];
     this.effects.push({kind:'tower-ascend',x,y,color:TOWERS[tower.type].color,ttl:1.2,max:1.2});
+    this.revision++;
+    return true;
+  }
+
+  get lateArsenalUnlocked(){return this.mode==='endless'&&this.stage>ENDLESS_ARSENAL_WAVE;}
+
+  reinforcementCost(index){
+    const tower=this.towers[index];
+    if(!this.lateArsenalUnlocked||!tower?.ascended)return null;
+    const {maxLevel,baseCost,costStep}=TOWER_REINFORCEMENT;
+    return tower.reinforcement>=maxLevel?null:baseCost+tower.reinforcement*costStep;
+  }
+
+  reinforceTower(index){
+    const cost=this.reinforcementCost(index);
+    if(this.finished||cost===null||this.gold<cost)return false;
+    const tower=this.towers[index];
+    this.gold-=cost;
+    tower.reinforcement++;
+    tower.spent+=cost;
+    const [x,y]=this.pads[index];
+    this.effects.push({kind:'tower-ascend',x,y,color:TOWERS[tower.type].color,ttl:.85,max:.85});
     this.revision++;
     return true;
   }
@@ -810,7 +853,7 @@ class Game {
     const spec=Object.hasOwn(TOWERS,type) ? TOWERS[type] : null;
     if(this.finished || !isSlot(index,this.map) || this.towers[index] || !spec || !this.canBuildType(type) || this.atTowerLimit(type) || this.gold<spec.cost) return false;
     this.gold-=spec.cost;
-    this.towers[index]={type,damage:0,speed:0,damageLost:0,speedLost:0,ascended:false,spent:spec.cost,cooldown:0,angle:-Math.PI/2,stunned:0,webbed:0,frozen:0};
+    this.towers[index]={type,damage:0,speed:0,damageLost:0,speedLost:0,ascended:false,reinforcement:0,spent:spec.cost,cooldown:0,angle:-Math.PI/2,stunned:0,webbed:0,frozen:0};
     this.onSound?.('build');
     this.revision++;
     return true;
@@ -965,7 +1008,7 @@ class Game {
   dropCard(enemy){
     const roll=Math.imul(this.kills,2654435761)>>>0;
     if(!enemy.rage&&!enemy.ability&&this.kills!==5&&this.kills%12!==0&&roll%100>=7)return;
-    const choices=Object.keys(SKILLS).filter(key=>this.cards[key]<CARD_LIMIT);
+    const choices=Object.keys(SKILLS).filter(key=>!SKILLS[key].price&&this.cards[key]<CARD_LIMIT);
     if(!choices.length)return;
     const key=choices[(roll>>>9)%choices.length];
     this.cards[key]++;
@@ -973,8 +1016,23 @@ class Game {
     this.effects.push({kind:'card',x:enemy.x,y:enemy.y,text:'✦ '+SKILLS[key].name,ttl:1.4,max:1.4});
   }
 
+  canBuyCard(key){
+    const price=Object.hasOwn(SKILLS,key)&&SKILLS[key].price;
+    return !!price&&this.lateArsenalUnlocked&&!this.finished&&this.cards[key]<CARD_LIMIT&&this.gold>=price;
+  }
+
+  buyCard(key){
+    if(!this.canBuyCard(key))return false;
+    this.gold-=SKILLS[key].price;
+    this.cards[key]++;
+    this.revision++;
+    return true;
+  }
+
   useCard(key,x,y){
     if(this.finished||!Object.hasOwn(SKILLS,key)||this.cards[key]===0)return false;
+    const skill=SKILLS[key];
+    if(skill.price&&!this.lateArsenalUnlocked)return false;
     if(key==='repair'){
       if(this.lives===this.maxLives)return false;
       this.lives=Math.min(this.maxLives,this.lives+5);
@@ -990,16 +1048,27 @@ class Game {
         }
         this.enemies=this.enemies.filter(enemy=>enemy.hp>0);
         this.effects.push({kind:key,x,y,radius,color,ttl:.85,max:.85});
+      }else if(key==='barrage'){
+        const targets=this.enemies.filter(enemy=>enemy.hp>0);
+        if(!targets.length)return false;
+        const interval=Math.ceil(targets.length/6);
+        targets.forEach((enemy,index)=>{
+          const boss=enemy.type==='boss'||!!enemy.ability;
+          this.hit(enemy,enemy.maxHp*(boss?skill.bossDamage:skill.mobDamage),0,true);
+          if(index%interval===0)this.effects.push({kind:'cataclysm',x:enemy.x,y:enemy.y,radius:69,color:skill.color,ttl:.85,max:.85});
+        });
+        this.enemies=this.enemies.filter(enemy=>enemy.hp>0);
       }else if(key==='freeze'){
         if(this.freezeTimer>0)return false;
         this.freezeTimer=4;
       }else{
         if(this.boostTimer>0)return false;
-        this.boostTimer=9;
+        this.boostTimer=skill.duration??9;
+        this.boostRate=skill.rate??1.8;
       }
     }
     this.cards[key]--;
-    this.onSound?.(key);
+    this.onSound?.(key==='barrage'?'cataclysm':key==='surge'?'overdrive':key);
     this.revision++;
     return true;
   }
@@ -1156,6 +1225,7 @@ class Game {
       this.revision++;
       return;
     }
+    const boost=this.boostTimer>0?this.boostRate:1;
     for(const [index,tower] of this.towers.entries()){
       if(!tower) continue;
       const webbed=tower.webbed>0;
@@ -1170,7 +1240,7 @@ class Game {
         if(!tower.frozen)this.revision++;
         continue;
       }
-      tower.cooldown=Math.max(0,tower.cooldown-dt*(this.boostTimer>0?1.8:1)*(webbed?.5:1)*towerRate);
+      tower.cooldown=Math.max(0,tower.cooldown-dt*boost*(webbed?.5:1)*towerRate);
       if(stunned||tower.cooldown>0)continue;
       const [x,y]=pads[index];
       const stats=this.stats(tower),ascended=tower.ascended;
@@ -1284,6 +1354,52 @@ const palettes={
   boss:['#74372e','#d1643c','#ffcf7a'],
 };
 
+function paintIronward(ctx,step){
+  for(const side of [-1,1]){
+    const boot=-10+step*side*2.4;
+    shape(ctx,[[boot-3,side*4],[boot-4,side*8],[boot+3,side*10],[boot+6,side*6]],'#4c302b');
+    stroke(ctx,[[boot-2,side*7],[boot+3,side*8]],'#b27657',1.5);
+  }
+  shape(ctx,[[-13,0],[-10,-7],[-5,-10],[3,-10],[8,-6],[8,6],[3,10],[-5,10],[-10,7]],'#74382f');
+  shape(ctx,[[-13,0],[-8,-6],[-4,-7],[-1,0],[-4,7],[-8,6]],'#a9503e');
+  for(const side of [-1,1]){
+    shape(ctx,[[-6,side*5],[-3,side*10],[3,side*11],[7,side*8],[4,side*4]],'#a66d4a');
+    stroke(ctx,[[-3,side*9],[2,side*10],[5,side*8]],'#e4b180',1.35);
+  }
+  shape(ctx,[[-4,-4],[1,-6],[6,-4],[9,0],[6,4],[1,6],[-4,4]],'#b77958');
+  stroke(ctx,[[3,-3],[5,-1],[5,1],[3,3]],'#402824',1.7);
+  const face=ctx.createLinearGradient(9,-13,14,13);
+  face.addColorStop(0,'#dc7c59');
+  face.addColorStop(.43,'#a54538');
+  face.addColorStop(1,'#53272b');
+  shape(ctx,[[5,-14],[11,-13],[15,-8],[17.5,0],[15,8],[11,13],[5,14],[8,0]],'#512e29');
+  shape(ctx,[[7,-13],[11,-12],[15,-7],[17,0],[15,7],[11,12],[7,13],[10,0]],face,'#e6a674');
+  stroke(ctx,[[10,-11],[13,-6],[15,0],[13,6],[10,11]],'#f5bd87',1.45);
+  stroke(ctx,[[9,-6],[12,0],[9,6]],'#602e2b',1.6);
+  for(const side of [-1,1])oval(ctx,11,side*8.5,1,1,'#f9cea3');
+}
+
+function paintRiftstalker(ctx,step){
+  for(const side of [-1,1]){
+    const reach=step*side*3.5;
+    const fore=[[7,side*3],[9+reach,side*7],[11+reach,side*8],[12.5+reach,side*7]];
+    const hind=[[-6,side*3],[-5-reach,side*8],[-10-reach,side*9],[-12.5-reach,side*7]];
+    stroke(ctx,fore,'#302341',3.3);
+    stroke(ctx,hind,'#302341',3.3);
+    stroke(ctx,fore,'#8a66c0',1.45);
+    stroke(ctx,hind,'#6845a7',1.45);
+    stroke(ctx,fore.slice(-2),'#a7faec',1.5);
+  }
+  const flick=step*1.35;
+  shape(ctx,[[-5,-4],[-13,-6+flick],[-17,-3+flick],[-12,-1],[-17.4,4+flick],[-12,4],[-5,3]],'#694394');
+  stroke(ctx,[[-16,3+flick],[-12,1],[-7,1]],'#b085df',1.2);
+  shape(ctx,[[-12,0],[-7,-4],[-3,-6],[5,-5],[10,-7],[15,-4],[17.5,0],[15,4],[10,7],[5,5],[-3,6],[-7,4]],'#285f68','#2c2340');
+  shape(ctx,[[-10,0],[-4,-4],[2,-3],[7,0],[2,3],[-4,4]],'#519e9b',null);
+  shape(ctx,[[3,0],[8,-4],[12,-4],[17,0],[12,4],[8,4]],'#493c72');
+  stroke(ctx,[[-10,0],[-4,-1.7],[2,0],[8,0]],'#84f3e1',1.55);
+  for(const side of [-1,1])stroke(ctx,[[11,side*3],[14,side*2]],'#d9fff9',1.5);
+}
+
 function paintRaidBoss(ctx,type,step,casting){
   if(type==='colossus'){
     for(const side of [-1,1]){
@@ -1360,6 +1476,8 @@ function paintRaidBoss(ctx,type,step,casting){
 
 function paintEnemy(ctx,type,step,casting){
   ctx.lineJoin='round';ctx.lineCap='round';
+  if(type==='ironward'){paintIronward(ctx,step);return;}
+  if(type==='riftstalker'){paintRiftstalker(ctx,step);return;}
   if(type==='snowstalker'){
     for(const side of [-1,1])for(const x of [-6,4]){
       const foot=x+step*side*2;
@@ -2874,7 +2992,7 @@ const previousSlotCount=49;
 const oldDeepValleyLength=365;
 const legacyKey=mode=>mode==='campaign'?saveKey:saveKey+':'+mode;
 const storageKey=mode=>legacyKey(mode)+':v'+saveVersion;
-const towerFields=['type','damage','speed','damageLost','speedLost','ascended','spent','cooldown','angle','stunned','webbed','frozen'];
+const towerFields=['type','damage','speed','damageLost','speedLost','ascended','reinforcement','spent','cooldown','angle','stunned','webbed','frozen'];
 const enemyFields=['type','route','distance','hp','shield','age','slow','stunned','poison','poisonDamage','healTimer','boosted','abilityAt','abilityUntil'];
 const gameFields=['gold','lives','wave','kills','phase','spawned','spawnTimer'];
 
@@ -2892,7 +3010,7 @@ function storeProgress(storage,game,speed){
         combatTime:game.combatTime,legacyEndlessWave:game.legacyEndlessWave,
         soloRaid:game.soloRaid,
         fortificationLevel:game.fortificationLevel,
-        cards:game.cards,freezeTimer:game.freezeTimer,boostTimer:game.boostTimer,weather:game.weather,
+        cards:game.cards,freezeTimer:game.freezeTimer,boostTimer:game.boostTimer,boostRate:game.boostRate,weather:game.weather,
         towers:game.towers.map(tower=>tower&&pick(tower,towerFields)),
         enemies:game.enemies.filter(enemy=>enemy.hp>0).map(enemy=>pick(enemy,enemyFields)),
       },
@@ -2911,7 +3029,7 @@ function isNonnegative(value){
   return Number.isFinite(value)&&value>=0;
 }
 
-function validTower(tower,olderSave,ascensionUnlocked){
+function validTower(tower,olderSave,ascensionUnlocked,lateArsenalUnlocked){
   if(tower===null)return true;
   if(!tower)return false;
   const minimum=olderSave&&tower.type==='venom'?105:tower.type==='gravity'?930:tower.type==='storm'?520:
@@ -2920,6 +3038,7 @@ function validTower(tower,olderSave,ascensionUnlocked){
   return minimum!==null&&isInteger(tower.damage,0,maxLevel)&&isInteger(tower.speed,0,maxLevel)&&
     isInteger(tower.damageLost??0,0,maxLevel-tower.damage)&&isInteger(tower.speedLost??0,0,maxLevel-tower.speed)&&
     typeof (tower.ascended??false)==='boolean'&&(!tower.ascended||ascensionUnlocked)&&
+    isInteger(tower.reinforcement??0,0,tower.ascended&&lateArsenalUnlocked?TOWER_REINFORCEMENT.maxLevel:0)&&
     isInteger(tower.spent,minimum+(tower.ascended?TOWER_ASCENSION.cost:0))&&isNonnegative(tower.cooldown)&&Number.isFinite(tower.angle)&&
     isNonnegative(tower.stunned??0)&&isNonnegative(tower.webbed??0)&&isNonnegative(tower.frozen??0);
 }
@@ -2973,6 +3092,7 @@ function loadProgress(storage,mode='campaign'){
     const combatTime=saved.version>=6?state.combatTime:state.wave===0?0:null;
     if(combatTime!==null&&!isNonnegative(combatTime))return null;
     const wave=state.wave>0?waveFor(mode,state.wave,legacyEndlessWave,soloRaid):null;
+    const lateArsenalUnlocked=endless&&(state.phase==='between'?state.wave:state.wave-1)>=ENDLESS_ARSENAL_WAVE;
     const validPhase={
       ready:state.wave===0&&state.lives>0,
       active:!!wave&&state.lives>0,
@@ -2981,7 +3101,7 @@ function loadProgress(storage,mode='campaign'){
       lost:!!wave&&state.lives===0,
     };
     if(!Object.hasOwn(validPhase,state.phase)||!validPhase[state.phase]||
-       !Array.isArray(state.towers)||state.towers.length!==slotCount||!state.towers.every(tower=>validTower(tower,olderSave,endless&&state.wave>=TOWER_ASCENSION.afterWave))||
+       !Array.isArray(state.towers)||state.towers.length!==slotCount||!state.towers.every(tower=>validTower(tower,olderSave,endless&&state.wave>=TOWER_ASCENSION.afterWave,lateArsenalUnlocked))||
        !isInteger(state.spawned,0,wave?.queue.length??0)||!Array.isArray(state.enemies)||
        state.enemies.length>state.spawned||
        (!['active','lost'].includes(state.phase)&&state.enemies.length!==0))return null;
@@ -2996,16 +3116,21 @@ function loadProgress(storage,mode='campaign'){
     let retiredRefund=0;
     state.towers.forEach((tower,index)=>{
       if(tower?.type==='venom')retiredRefund+=tower.spent;
-      else if(tower)game.towers[index]={...pick(tower,towerFields),ascended:tower.ascended??false,damageLost:tower.damageLost??0,speedLost:tower.speedLost??0,stunned:tower.stunned??0,webbed:tower.webbed??0,frozen:tower.frozen??0};
+      else if(tower)game.towers[index]={...pick(tower,towerFields),ascended:tower.ascended??false,reinforcement:tower.reinforcement??0,damageLost:tower.damageLost??0,speedLost:tower.speedLost??0,stunned:tower.stunned??0,webbed:tower.webbed??0,frozen:tower.frozen??0};
     });
     game.gold+=retiredRefund;
     if(!legacy){
-      const cards=preBalanceSave?{...state.cards,cataclysm:state.cards?.meteor}:state.cards;
-      if(!cards||!Object.keys(SKILLS).every(key=>isInteger(cards[key],0,CARD_LIMIT))||
-         !isNonnegative(state.freezeTimer)||state.freezeTimer>4||!isNonnegative(state.boostTimer)||state.boostTimer>9)return null;
+      const cards={barrage:0,surge:0,...state.cards};
+      if(preBalanceSave)cards.cataclysm=state.cards?.meteor;
+      const boostRate=state.boostRate??1.8;
+      const surge=lateArsenalUnlocked&&boostRate===SKILLS.surge.rate;
+      if(!Object.keys(SKILLS).every(key=>isInteger(cards[key],0,SKILLS[key].price&&!lateArsenalUnlocked?0:CARD_LIMIT))||
+         (!surge&&boostRate!==1.8)||!isNonnegative(state.freezeTimer)||state.freezeTimer>4||
+         !isNonnegative(state.boostTimer)||state.boostTimer>(surge?SKILLS.surge.duration:9))return null;
       game.cards=pick(cards,Object.keys(SKILLS));
       game.freezeTimer=state.freezeTimer;
       game.boostTimer=state.boostTimer;
+      game.boostRate=boostRate;
     }
     if(state.weather!=null){
       const {type,remaining,active}=state.weather;
@@ -3569,7 +3694,7 @@ const shop = Object.entries(TOWERS).map(([type,spec],index)=>{
   return [type,button];
 });
 
-const cardSymbols={cataclysm:'target',freeze:'frost',repair:'heart',overdrive:'tesla'};
+const cardSymbols={cataclysm:'target',freeze:'frost',repair:'heart',overdrive:'tesla',barrage:'target',surge:'tesla'};
 const cardButtons=Object.entries(SKILLS).map(([key,skill])=>{
   const button=document.createElement('button');
   button.type='button';
@@ -3591,8 +3716,26 @@ const cardButtons=Object.entries(SKILLS).map(([key,skill])=>{
     }
     sync();
   });
-  el('skill-hand').append(button);
-  return [key,button];
+  if(!skill.price){
+    el('skill-hand').append(button);
+    return [key,button,null];
+  }
+  const row=document.createElement('div');
+  row.className='late-skill';
+  const description=document.createElement('small');
+  description.textContent=skill.description;
+  const buy=document.createElement('button');
+  buy.type='button';
+  buy.className='speed-button';
+  buy.addEventListener('click',()=>{
+    if(!game.buyCard(key))return;
+    showNotice(skill.name+'已购买');
+    saveProgress();
+    sync();
+  });
+  row.append(button,description,buy);
+  el('late-skill-hand').append(row);
+  return [key,button,buy];
 });
 
 function clearAim(){targeting=false;aim=null;}
@@ -3674,6 +3817,10 @@ upgradePanel.innerHTML=`<header><h3 id="inspect-title"></h3><button id="inspect-
   <button id="ascend-tower" class="speed-button" type="button" aria-describedby="ascension-detail"></button>
   <span id="ascension-detail"></span>
 </div>
+<div id="inspect-reinforcement" class="inspect-ascension" hidden>
+  <button id="reinforce-tower" class="speed-button" type="button" aria-describedby="reinforcement-detail"></button>
+  <span id="reinforcement-detail"></span>
+</div>
 <button id="sell-tower" class="sell-tower" type="button">${icon('salvage')} 拆除防御塔 <strong></strong></button>`;
 el('inspect-close').addEventListener('click',()=>{
   const slot=inspected;
@@ -3695,6 +3842,13 @@ for(const [track,label] of Object.entries(tracks)){
 el('ascend-tower').addEventListener('click',()=>{
   if(!game.ascendTower(inspected))return;
   showNotice(TOWERS[game.towers[inspected].type].name+'已升阶');
+  saveProgress();
+  sync();
+});
+
+el('reinforce-tower').addEventListener('click',()=>{
+  if(!game.reinforceTower(inspected))return;
+  showNotice(`炮塔强化至 Lv.${game.towers[inspected].reinforcement}`);
   saveProgress();
   sync();
 });
@@ -4041,6 +4195,7 @@ function sync(){
   const checkpointUnlocked=game.canRestartAtEndlessCheckpoint(record.waves);
   el('checkpoint-entry').hidden=!endless;
   el('ascension-available').hidden=!game.ascensionUnlocked||game.finished;
+  el('ascension-available').textContent=game.lateArsenalUnlocked?'后期军备已解锁 · 强化炮塔或购买战术卡':'炮塔升阶已解锁 · 点击炮塔查看';
   if(endless){
     const button=el('start-checkpoint');
     button.disabled=!checkpointUnlocked;
@@ -4115,11 +4270,20 @@ function sync(){
   el('board').classList.toggle('aiming',targeting);
   el('aim-banner').hidden=!targeting;
   el('slots').classList.toggle('placing',!!chosen&&!game.atTowerLimit(chosen));
-  for(const [key,button] of cardButtons){
+  el('late-arsenal').hidden=!game.lateArsenalUnlocked||game.finished;
+  for(const [key,button,buy] of cardButtons){
     const count=game.cards[key];
-    const active=key==='freeze'?game.freezeTimer>0:key==='overdrive'&&game.boostTimer>0;
+    const skill=SKILLS[key];
+    const boosting=key==='surge'||key==='overdrive';
+    const boostActive=boosting&&game.boostTimer>0;
+    const active=key==='freeze'?game.freezeTimer>0:boostActive&&game.boostRate===(skill.rate??1.8);
     const needsBattle=count>0&&key!=='repair'&&phase!=='active'&&!game.finished;
-    button.disabled=!count||game.finished||(key==='repair'?lives===game.maxLives:phase!=='active'||active);
+    button.disabled=!count||game.finished||(key==='repair'?lives===game.maxLives:phase!=='active'||active||boostActive||(key==='barrage'&&!game.enemies.length));
+    if(buy){
+      buy.disabled=!game.canBuyCard(key);
+      buy.textContent=count>=CARD_LIMIT?'库存已满':`购买 · ${formatDamage(skill.price)} 金`;
+      buy.setAttribute('aria-label',`购买${skill.name} · ${formatDamage(skill.price)} 金币${count>=CARD_LIMIT?' · 库存已满':''}`);
+    }
     button.querySelector('.card-reason').hidden=!needsBattle;
     button.setAttribute('aria-pressed',String(!!SKILLS[key].targeted&&targeting));
     button.setAttribute('aria-label',SKILLS[key].name+'，剩余 '+count+' 张。'+(needsBattle?'仅战斗中可用。':'')+SKILLS[key].description);
@@ -4166,6 +4330,14 @@ function sync(){
       const bonuses=`伤害 ×${TOWER_ASCENSION.damage} · 射速 ×${TOWER_ASCENSION.rate} · 射程 +${Math.round((TOWER_ASCENSION.range-1)*100)}%`;
       el('ascension-detail').textContent=!game.ascensionUnlocked?`完成第 ${TOWER_ASCENSION.afterWave} 波解锁 · ${bonuses}`:
         !tower.ascended&&gold<TOWER_ASCENSION.cost?`金币不足 · ${bonuses}`:bonuses;
+    }
+    el('inspect-reinforcement').hidden=!game.lateArsenalUnlocked;
+    if(game.lateArsenalUnlocked){
+      const cost=game.reinforcementCost(inspected);
+      const button=el('reinforce-tower');
+      button.disabled=cost===null||gold<cost;
+      button.textContent=cost===null?(tower.ascended?'强化已满级':'强化 · 先升阶'):`强化 · ${formatDamage(cost)} 金币`;
+      el('reinforcement-detail').textContent=`Lv.${tower.reinforcement} / ${TOWER_REINFORCEMENT.maxLevel} · 每级增加升阶后伤害的 ${Math.round(TOWER_REINFORCEMENT.damagePerLevel*100)}%`;
     }
     const repairHint=el('inspect-repair');
     repairHint.hidden=!towerNeedsRepair(tower);
@@ -4341,6 +4513,10 @@ requestAnimationFrame(frame);
     <section class="skill-panel" aria-labelledby="skills-title">
       <header><div><div class="eyebrow">TACTICAL CARDS</div><h2 id="skills-title">战术技能卡</h2></div><p id="skill-hint">击杀敌军可掉落卡片，每种最多存 5 张。</p></header>
       <div id="skill-hand" class="skill-hand"></div>
+      <section id="late-arsenal" class="late-arsenal" aria-labelledby="late-arsenal-title" hidden>
+        <h3 id="late-arsenal-title">后期战术补给</h3>
+        <div id="late-skill-hand" class="late-skill-hand"></div>
+      </section>
     </section>
   </section>
 
