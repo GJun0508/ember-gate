@@ -328,6 +328,16 @@ kbd{display:inline-block;background:#252b22;color:#cbd0ba;border:1px solid #444c
   width:min(310px,calc(100vw - 20px));overflow:auto;overscroll-behavior:contain;
   border:1px solid #a28b58;border-radius:10px;background:#222b21;box-shadow:0 8px 24px #111b}
 @media(pointer:coarse){.upgrade-popover .upgrade-actions button,.upgrade-popover .sell-tower{min-height:42px}}
+/* Campaign overhaul: aiming owns every battlefield click, including occupied pads. */
+.board.aiming .slots,.board.aiming .slot{pointer-events:none}
+.battle-controls .mode-tabs{grid-template-columns:repeat(4,minmax(0,1fr))}
+.mode-help{margin:0 16px 12px;padding:9px 11px;border:1px solid #695c3b;border-radius:7px;background:#2c3022;color:#e4d2a7;font-size:12px}
+.shop-categories{display:flex;gap:5px;flex-wrap:wrap;margin-bottom:10px}
+.shop-categories button{border:1px solid #545d47;border-radius:5px;padding:6px 8px;background:#242c22;color:#bcc5ab;font-size:11px}
+.shop-categories button[aria-pressed=true]{background:#55482d;border-color:#c4a46b;color:#ffe5ae}
+#retry-operation{width:100%;margin:9px 0}
+@media(max-width:640px){.battle-controls .mode-tabs{grid-template-columns:repeat(2,minmax(0,1fr))}.mode-help{margin:0 10px 9px;font-size:11px}.shop-categories button{min-height:36px}.sidebar{padding-top:0!important}}
+
 </style>
 <script type="module">
 const WIDTH = 900;
@@ -394,7 +404,10 @@ const MAPS=[
   {name:'霜原堡垒',english:'FROSTHOLD',width:1200,height:780,slotCount:snowSlots.length,slots:snowSlots,goal:snowGoal,routes:snowRoutes,first:1,last:50,snow:true},
 ];
 for(const map of MAPS){
-  map.airRoutes=map.routes.map(route=>measureRoute({...route,points:[route.points[0],map.goal]}));
+  map.airRoutes=map.routes.map(route=>{
+    const [x,y]=route.points[0],[gx,gy]=map.goal,length=Math.hypot(x-gx,y-gy),scale=Math.max(1,1350/length);
+    return measureRoute({...route,points:[[gx+(x-gx)*scale,gy+(y-gy)*scale],map.goal]});
+  });
 }
 
 function enemyRoutes(enemy,map){
@@ -413,11 +426,11 @@ function snowForecast(previous){
 }
 const SKILLS={
   cataclysm:{name:'天罚裂隙',description:'点选地图，对半径 160 内的敌人造成 720 点穿透伤害，使其眩晕 2 秒并减速 3 秒。',color:'#ffbb75',targeted:true,radius:160,damage:720,slow:3,stun:2},
-  freeze:{name:'全域冻结',description:'全场敌人减速 85%，持续 4 秒。',color:'#99d2e0'},
+  freeze:{name:'全域冻结',description:'全场敌人减速 85%，持续 7 秒。',color:'#99d2e0',duration:7},
   repair:{name:'要塞急修',description:'恢复 5 点要塞生命，最多恢复至当前生命上限。',color:'#b5d49e'},
-  overdrive:{name:'火力过载',description:'所有炮台射速提升 80%，持续 9 秒。',color:'#e8cc8c'},
-  barrage:{name:'轨道歼灭',description:'打击场上所有敌人，造成小怪最大生命的 40%、Boss 最大生命的 12% 的穿透伤害。',color:'#ffab81',price:350000,mobDamage:.40,bossDamage:.12},
-  surge:{name:'全线超载',description:'所有炮台射速提升至 2.5 倍，持续 16 秒。与火力过载互斥。',color:'#fce19d',price:500000,rate:2.5,duration:16},
+  overdrive:{name:'火力过载',description:'射速提升 80%，持续 9 秒。每波最多 2 次，冷却 24 秒。',color:'#e8cc8c',rate:1.8,duration:9,cooldown:24,perWave:2},
+  barrage:{name:'轨道歼灭',description:'打击场上所有敌人，造成小怪最大生命的 40%、Boss 最大生命的 12% 的穿透伤害。',color:'#ffab81',price:120000,mobDamage:.40,bossDamage:.12},
+  surge:{name:'全线超载',description:'射速提升至 3.2 倍、伤害提升 60%，持续 18 秒。可替换小过载，冷却 30 秒。',color:'#fce19d',price:180000,rate:3.2,damageBoost:1.6,duration:18,cooldown:30},
 };
 const CARD_LIMIT=5;
 const MAX_UPGRADE_LEVEL=6;
@@ -430,26 +443,26 @@ const ENDLESS_CHECKPOINT_MIN_BEST=131;
 const ENDLESS_CHECKPOINT_GOLD=340000;
 const TOWER_ASCENSION={afterWave:150,cost:100000,damage:2,rate:1.5,range:1.15};
 const ENDLESS_ARSENAL_WAVE=200;
-const TOWER_REINFORCEMENT={maxLevel:12,baseCost:150000,costStep:75000,damagePerLevel:.15};
+const TOWER_REINFORCEMENT={maxLevel:18,baseCost:60000,costStep:25000,damagePerLevel:.22};
 const TOWERS = {
-  arrow: {name:'弩塔', tag:'单体 · 快速', cost:70, range:128, damage:17, rate:1.25, color:'#dac58e', description:'发射弩箭，持续打击最靠近要塞的敌人。'},
-  cannon: {name:'重炮塔', tag:'范围 · 溅射', cost:125, range:154, damage:41, rate:.56, splash:66, color:'#ef9b68', description:'炮弹爆炸，对目标及附近的敌人造成伤害。'},
-  frost: {name:'寒晶塔', tag:'控场 · 减速', cost:100, range:107, damage:11, rate:1, slow:1.65, color:'#87c5d0', description:'寒冰攻击降低敌人移速，让其他塔有更多输出时间。'},
-  sniper: {name:'破甲塔', tag:'远程 · 穿透', cost:145, range:212, damage:67, rate:.47, pierce:true, color:'#efc182', description:'从远处重击单个敌人，直接穿过护盾与铁甲。'},
-  tesla: {name:'电弧塔', tag:'连锁 · 群攻', cost:150, range:126, damage:30, rate:.87, chain:2, color:'#b9acf1', description:'闪电可连续跳到另外两个近邻，伤害逐跳衰减。'},
-  mortar: {name:'裂地迫击炮',tag:'重型 · 大范围',cost:360,range:246,damage:115,rate:.49,splash:105,unlock:13,color:'#eea079',description:'超远程炮击，对大范围内的敌人造成溅射伤害。'},
-  laser: {name:'棱镜激光塔',tag:'重型 · 贯穿',cost:430,range:252,damage:101,rate:.68,pierce:true,beam:24,unlock:13,color:'#f3dba7',description:'射线可贯穿一条直线上的多个敌人，无视护盾和护甲。'},
-  storm: {name:'风暴核心',tag:'重型 · 分叉电击',cost:1300,upgradeBase:520,range:190,damage:132,rate:1.05,chain:8,jumpRange:145,slow:1.4,unlock:19,color:'#b6b0ff',description:'雷击同时分叉并继续跳跃，一次最多击中九个敌人，附带减速。'},
-  railgun: {name:'天穹轨道炮',tag:'重型 · 穿透',cost:780,range:326,damage:350,rate:.34,pierce:true,beam:31,unlock:21,endlessUnlock:8,color:'#8adcf5',description:'超远射程，一炮贯穿一整列敌人，无视护盾和护甲。'},
-  gravity: {name:'引力歼灭炮',tag:'重型 · 引力场',cost:1500,range:265,damage:300,rate:.30,splash:125,slow:3.5,fieldDuration:2.8,unlock:23,endlessUnlock:12,color:'#e3a8f2',description:'爆破后留下引力场，持续伤害并压制治疗，前 1 秒轻微回拉敌人。无尽模式最多建造两座。'},
-  sunlance: {name:'裂日激光塔',tag:'重型 · 粗激光',cost:1150,range:285,damage:900,rate:.20,pierce:true,beam:52,unlock:22,endlessUnlock:10,color:'#ff985c',description:'基础每 5 秒发射一道粗激光，主目标受到 900 点伤害，光束内其他敌人受到 720 点伤害。无视护甲和护盾。'},
+  arrow: {burst:3,category:'fire',name:'弩塔', tag:'单体 · 快速', cost:70, range:128, damage:17, rate:1.25, color:'#dac58e', description:'三连弩箭，每支造成基础伤害的 55%，持续打击最靠近要塞的敌人。'},
+  cannon: {category:'area',name:'重炮塔', tag:'范围 · 溅射', cost:125, range:154, damage:41, rate:.56, splash:66, color:'#ef9b68', description:'炮弹爆炸，对目标及附近的敌人造成伤害。'},
+  frost: {splash:80,category:'control',name:'寒晶塔', tag:'控场 · 减速', cost:100, range:107, damage:11, rate:1, slow:1.65, color:'#87c5d0', description:'冰弹命中后扩散半径 80 的冰环，同时减速附近各路敌军。'},
+  sniper: {bossBonus:1.6,category:'pierce',name:'破甲塔', tag:'远程 · 穿透', cost:145, range:212, damage:67, rate:.47, pierce:true, color:'#efc182', description:'远程穿透护盾与铁甲，对首领造成额外 60% 伤害。'},
+  tesla: {category:'area',name:'电弧塔', tag:'连锁 · 群攻', cost:150, range:126, damage:30, rate:.87, chain:2, color:'#b9acf1', description:'闪电可连续跳到另外两个近邻，伤害逐跳衰减。'},
+  mortar: {multiLane:3,category:'area',name:'裂地迫击炮',tag:'重型 · 大范围',cost:360,range:246,damage:115,rate:.49,splash:105,unlock:13,color:'#eea079',description:'最多向三条支路发射炮弹，多路齐射时每发造成 70% 伤害，爆炸可覆盖相邻支路。'},
+  laser: {category:'fire',name:'棱镜激光塔',tag:'重型 · 贯穿',cost:430,range:252,damage:101,rate:.68,pierce:true,beam:24,unlock:13,color:'#f3dba7',description:'射线可贯穿一条直线上的多个敌人，无视护盾和护甲。'},
+  storm: {multiLane:3,category:'area',name:'风暴核心',tag:'重型 · 分叉电击',cost:1300,upgradeBase:520,range:190,damage:132,rate:1.05,chain:8,jumpRange:145,slow:1.4,unlock:19,color:'#b6b0ff',description:'最多同时锁定三条支路，分别发动分叉雷击，附带减速。'},
+  railgun: {category:'pierce',name:'天穹轨道炮',tag:'重型 · 穿透',cost:780,range:326,damage:350,rate:.34,pierce:true,beam:31,unlock:21,endlessUnlock:8,color:'#8adcf5',description:'超远射程，一炮贯穿一整列敌人，无视护盾和护甲。'},
+  gravity: {category:'control',name:'引力歼灭炮',tag:'重型 · 引力场',cost:1500,range:265,damage:300,rate:.30,splash:125,slow:3.5,fieldDuration:2.8,unlock:23,endlessUnlock:12,color:'#e3a8f2',description:'爆破后留下引力场，持续伤害并压制治疗，前 1 秒轻微回拉敌人。无尽模式最多建造两座。'},
+  sunlance: {category:'fire',name:'裂日激光塔',tag:'重型 · 粗激光',cost:1150,range:285,damage:900,rate:.20,pierce:true,beam:52,unlock:22,endlessUnlock:10,color:'#ff985c',description:'基础每 5 秒发射一道粗激光，主目标受到 900 点伤害，光束内其他敌人受到 720 点伤害。无视护甲和护盾。'},
 };
 const ENEMIES = {
   grunt: {name:'荒野斥候', skill:'基础敌兵', hp:40, speed:76, bounty:10, leak:1, color:'#c47761', size:11},
   runner: {name:'疾行者', skill:'周期冲刺', hp:29, speed:102, bounty:11, leak:1, color:'#d1af68', size:9, dash:true},
   brute: {name:'铁甲兽', skill:'抵挡 30% 普通伤害', hp:108, speed:53, bounty:22, leak:2, color:'#a787a7', size:15, armor:.30},
   shield: {name:'盾卫', skill:'护盾吸收伤害，破甲可穿透', hp:64, speed:65, bounty:18, leak:2, color:'#96b8c6', size:13, barrier:42},
-  shaman: {name:'祭司', skill:'登场 2 秒后治疗附近友军，之后每 3 秒治疗一次', hp:53, speed:62, bounty:21, leak:1, color:'#b3c78d', size:12, healInterval:3},
+  shaman: {name:'祭司', skill:'每 3 秒治疗普通友军 8%，不能治疗祭司和首领，同一目标不叠加治疗', hp:53, speed:62, bounty:21, leak:1, color:'#b3c78d', size:12, healInterval:3},
   shade: {name:'影兽', skill:'减速持续时间缩短 70%', hp:46, speed:117, bounty:16, leak:1, color:'#c9b5e0', size:10, tenacity:.7},
   ashbat: {name:'灰翼蝠',skill:'无视地形，从入口沿直线飞向要塞',hp:40,speed:83,bounty:22,leak:1,color:'#d3a3e7',size:12,flying:true,directFlight:true},
   skyray: {name:'铁甲飞鳐',skill:'沿直线突袭要塞，装甲抵挡 25% 普通伤害',hp:105,speed:61,bounty:32,leak:2,color:'#8cc9db',size:17,armor:.25,flying:true,directFlight:true},
@@ -538,6 +551,7 @@ let endlessNumber=0;
 let endlessWave;
 let endlessLegacy=false;
 let endlessSoloRaid=false;
+let endlessFormation=false;
 const raidTypes=['colossus','mirrorbeast','wingking','spider','beetle','warlock'];
 const raidRoutes=[0,2,4,1,3,0];
 const previousRaidHealthCurve=[2400,6500,15000,25000,40000,55000];
@@ -574,15 +588,17 @@ function endlessWaveKillCap(wave){
   return endlessBaseWaveEnemyCap+endlessReinforcements(wave);
 }
 
-function waveFor(mode,number,legacy=false,soloRaid=false){
-  if(mode==='campaign')return WAVES[Math.max(0,number-1)];
+function waveFor(mode,number,legacy=false,soloRaid=false,legacyFormation=false){
+  if(mode==='campaign'||mode==='operation')return WAVES[Math.max(0,number-1)];
   if(mode==='snow')return SNOW_WAVES[Math.max(0,number-1)];
-  if(endlessNumber===number&&endlessLegacy===legacy&&endlessSoloRaid===soloRaid)return endlessWave;
+  if(endlessNumber===number&&endlessLegacy===legacy&&endlessSoloRaid===soloRaid&&endlessFormation===legacyFormation)return endlessWave;
   endlessNumber=number;
   endlessLegacy=legacy;
   endlessSoloRaid=soloRaid;
+  endlessFormation=legacyFormation;
   const lateWaves=Math.max(0,number-100);
-  const mobHealthMultiplier=1+Math.min(.6,lateWaves*.02);
+  const compact=number>200&&!legacyFormation;
+  const mobHealthMultiplier=(1+Math.min(.6,lateWaves*.02))*(compact?1.25:1);
   const lateNote=lateWaves?' · 百波强化':'';
   if(!legacy&&number%10===0){
     const tier=number/10;
@@ -604,7 +620,7 @@ function waveFor(mode,number,legacy=false,soloRaid=false){
   }
   const elites=number>ENDLESS_ARSENAL_WAVE;
   const pool=['grunt','runner','shield','shade','brute','shaman','runner','brute'];
-  const count=Math.min(endlessBaseWaveEnemyCap,20+number*3)+endlessReinforcements(number);
+  const count=compact?48:Math.min(endlessBaseWaveEnemyCap,20+number*3)+endlessReinforcements(number);
   const boss=legacy&&number%5===0;
   const queue=Array.from({length:count},(_,i)=>{
     if(boss&&i%19===10)return 'boss';
@@ -615,7 +631,7 @@ function waveFor(mode,number,legacy=false,soloRaid=false){
     return pool[(i*3+Math.floor(i/5)+number)%pool.length];
   });
   const note=boss?'首领波 · 五路进攻 · '+endlessTowerAttackNote:'五路进攻 · 敌军持续增强';
-  const gap=Math.max(.27,.63-number*.018)-Math.min(.06,lateWaves*.002);
+  const gap=compact?.55+(number%3)*.04:Math.max(.27,.63-number*.018)-Math.min(.06,lateWaves*.002);
   endlessWave={name:boss?'无尽 · 巨兽攻势':'无尽 · 裂谷守卫',note:note+lateNote+(elites?' · 铁幕卫士、裂隙猎手与直线空袭':''),queue,gap,lanes:5,mobHealthMultiplier};
   return endlessWave;
 }
@@ -774,6 +790,11 @@ class Game {
     this.freezeTimer=0;
     this.boostTimer=0;
     this.boostRate=1.8;
+    this.boostDamage=1;
+    this.cardCooldowns={};
+    this.cardUses={};
+    this.operationCheckpoint=null;
+    this.legacyFormation=false;
     this.weather=null;
     this.spawned=0;
     this.spawnTimer=0;
@@ -800,7 +821,8 @@ class Game {
     const rateScale=1.30**Math.min(3,tower.speed)*1.18**Math.max(0,tower.speed-3);
     const {ascended}=tower;
     const damage=Math.round(type.damage*damageScale)*(ascended?TOWER_ASCENSION.damage:1);
-    return {...type,damage:Math.round(damage*(1+(tower.reinforcement??0)*TOWER_REINFORCEMENT.damagePerLevel)),
+    return {...type,damage:Math.round(damage*(1+(tower.reinforcement??0)*TOWER_REINFORCEMENT.damagePerLevel)*
+        (this.mode==='endless'?1+Math.min(2,Math.max(0,this.stage-200)*.0015):1)*(this.boostTimer>0?this.boostDamage:1)),
       rate:type.rate*rateScale*(ascended?TOWER_ASCENSION.rate:1),
       range:ascended?Math.round(type.range*TOWER_ASCENSION.range):type.range};
   }
@@ -944,16 +966,20 @@ class Game {
   }
 
   get stage(){return Math.max(1,this.phase==='between'?this.wave+1:this.wave);}
-  get waveCount(){return this.mode==='snow'?SNOW_WAVES.length:this.mode==='campaign'?WAVES.length:Infinity;}
+  get waveCount(){return this.mode==='snow'?SNOW_WAVES.length:this.mode==='campaign'||this.mode==='operation'?WAVES.length:Infinity;}
   get map(){return this.mode==='snow'?MAPS[3]:this.mode==='endless'?MAPS[2]:MAPS.find(map=>this.stage<=map.last);}
   get pads(){return this.map.slots??SLOTS;}
   get finished(){ return this.phase==='won'||this.phase==='lost'; }
-  get waveInfo(){return waveFor(this.mode,Math.max(1,this.wave),this.legacyEndlessWave,this.soloRaid);}
+  get waveInfo(){return waveFor(this.mode,Math.max(1,this.wave),this.legacyEndlessWave,this.soloRaid,this.legacyFormation);}
   get remaining(){ return this.phase==='active' ? this.waveInfo.queue.length-this.spawned+this.enemies.length : 0; }
 
   start(){
     if(this.phase!=='ready'&&this.phase!=='between') return false;
+    if(this.mode==='operation')this.captureOperationCheckpoint();
     this.wave++;
+    this.cardUses={};
+    this.cardCooldowns={};
+    this.legacyFormation=false;
     this.legacyEndlessWave=false;
     this.soloRaid=false;
     this.phase='active';
@@ -961,6 +987,20 @@ class Game {
     this.spawnTimer=.28;
     this.weather=this.map.snow?snowForecast():null;
     this.onSound?.('wave-start');
+    this.revision++;
+    return true;
+  }
+
+  captureOperationCheckpoint(){
+    const fields=['gold','lives','wave','kills','combatTime','phase','spawned','spawnTimer','cards','towers'];
+    this.operationCheckpoint=JSON.parse(JSON.stringify(Object.fromEntries(fields.map(key=>[key,this[key]]))));
+  }
+
+  retryOperation(){
+    if(this.mode!=='operation'||this.phase!=='lost'||!this.operationCheckpoint)return false;
+    Object.assign(this,JSON.parse(JSON.stringify(this.operationCheckpoint)));
+    this.enemies=[];this.effects=[];this.freezeTimer=this.boostTimer=0;this.boostDamage=1;
+    this.cardCooldowns={};this.cardUses={};this.weather=null;
     this.revision++;
     return true;
   }
@@ -983,8 +1023,11 @@ class Game {
     const bounty=spec.ability?raid.bounty:Math.round(spec.bounty*(this.mode==='endless'?
       (type==='boss'?endlessRewardMultiplier(this.wave):endlessMobRewardMultiplier(this.wave)):1));
     const routes=enemyRoutes(spec,this.map);
-    const enemy={...spec,type,route,pathLength:routes[route].length,distance:0,maxHp,hp:maxHp,maxShield,shield:maxShield,bounty,age:0,slow:0,stunned:0,
+    const entry=spec.directFlight?this.map.routes[route].points[0]:null;
+    const enemy={...spec,type,route,bountyPaid:0,healLock:0,entryDelay:spec.directFlight?6:0,pathLength:routes[route].length,distance:0,maxHp,hp:maxHp,maxShield,shield:maxShield,bounty,age:0,slow:0,stunned:0,
       poison:0,poisonDamage:0,healTimer:spec.healInterval?2:0,boosted:false,...pointAt(0,route,routes)};
+    if(spec.directFlight)enemy.speed=Math.min(spec.speed,Math.hypot(entry[0]-this.map.goal[0],entry[1]-this.map.goal[1])/22);
+    if(this.mode==='endless'&&this.wave>200&&!this.legacyFormation&&!spec.ability)enemy.bounty=Math.round(enemy.bounty*1.75);
     if(spec.ability)Object.assign(enemy,{
       leak:Math.min(18,7+raid.tier),speed:spec.speed+Math.min(12,(raid.tier-1)*1.4),shield:0,
     });
@@ -1009,8 +1052,13 @@ class Game {
     }
     enemy.hp-=damage;
     enemy.slow=Math.max(enemy.slow,slow*(1-(enemy.tenacity??0)));
+    if(this.mode==='endless'&&this.wave>200&&(enemy.type==='boss'||enemy.ability)){
+      const milestones=Math.min(3,Math.floor((1-Math.max(0,enemy.hp)/enemy.maxHp)*4+1e-9));
+      const earned=Math.floor(enemy.bounty*.2*milestones),paid=enemy.bountyPaid??0;
+      if(earned>paid){this.gold+=earned-paid;enemy.bountyPaid=earned;this.revision++;}
+    }
     if(enemy.hp<=0){
-      this.gold+=enemy.bounty;
+      this.gold+=enemy.bounty-(enemy.bountyPaid??0);
       this.kills++;
       this.dropCard(enemy);
       this.effects.push({kind:'coin',x:enemy.x,y:enemy.y,text:'+'+enemy.bounty,ttl:.75,max:.75});
@@ -1029,14 +1077,19 @@ class Game {
     this.effects.push({kind:'card',x:enemy.x,y:enemy.y,text:'✦ '+SKILLS[key].name,ttl:1.4,max:1.4});
   }
 
+  cardPrice(key){
+    const price=SKILLS[key]?.price;
+    return price?Math.round(price*(1+Math.max(0,this.stage-200)/400)/1000)*1000:null;
+  }
+
   canBuyCard(key){
-    const price=Object.hasOwn(SKILLS,key)&&SKILLS[key].price;
+    const price=this.cardPrice(key);
     return !!price&&this.lateArsenalUnlocked&&!this.finished&&this.cards[key]<CARD_LIMIT&&this.gold>=price;
   }
 
   buyCard(key){
     if(!this.canBuyCard(key))return false;
-    this.gold-=SKILLS[key].price;
+    this.gold-=this.cardPrice(key);
     this.cards[key]++;
     this.revision++;
     return true;
@@ -1046,6 +1099,7 @@ class Game {
     if(this.finished||!Object.hasOwn(SKILLS,key)||this.cards[key]===0)return false;
     const skill=SKILLS[key];
     if(skill.price&&!this.lateArsenalUnlocked)return false;
+    if((this.cardCooldowns[key]??0)>0||(this.cardUses[key]??0)>=(skill.perWave??Infinity))return false;
     if(key==='repair'){
       if(this.lives===this.maxLives)return false;
       this.lives=Math.min(this.maxLives,this.lives+5);
@@ -1073,14 +1127,17 @@ class Game {
         this.enemies=this.enemies.filter(enemy=>enemy.hp>0);
       }else if(key==='freeze'){
         if(this.freezeTimer>0)return false;
-        this.freezeTimer=4;
+        this.freezeTimer=skill.duration;
       }else{
-        if(this.boostTimer>0)return false;
+        if(this.boostTimer>0&&!(key==='surge'&&this.boostRate===1.8))return false;
         this.boostTimer=skill.duration??9;
         this.boostRate=skill.rate??1.8;
+        this.boostDamage=skill.damageBoost??1;
       }
     }
     this.cards[key]--;
+    this.cardUses[key]=(this.cardUses[key]??0)+1;
+    this.cardCooldowns[key]=skill.cooldown??0;
     this.onSound?.(key==='barrage'?'cataclysm':key==='surge'?'overdrive':key);
     this.revision++;
     return true;
@@ -1092,6 +1149,8 @@ class Game {
     const inGravityField=enemy=>gravityFields.some(field=>Math.hypot(enemy.x-field.x,enemy.y-field.y)<=field.radius);
     for(const e of this.enemies){
       if(e.hp<=0)continue;
+      e.healLock=Math.max(0,(e.healLock??0)-dt);
+      if(e.entryDelay>0){e.entryDelay=Math.max(0,e.entryDelay-dt);continue;}
       for(const field of gravityFields){
         if(Math.hypot(e.x-field.x,e.y-field.y)>field.radius)continue;
         this.hit(e,field.damage*dt);
@@ -1136,8 +1195,9 @@ class Game {
       if(!healer.healInterval||healer.hp<=0||healer.stunned>0||healer.healTimer>0)continue;
       healer.healTimer+=healer.healInterval;
       for(const ally of this.enemies){
-        if(ally!==healer&&ally.hp>0&&!inGravityField(ally)&&Math.hypot(ally.x-healer.x,ally.y-healer.y)<=84){
-          ally.hp=Math.min(ally.maxHp,ally.hp+ally.maxHp*.13);
+        if(ally!==healer&&!ally.healInterval&&!ally.ability&&ally.type!=='boss'&&ally.hp>0&&!(ally.healLock>0)&&!inGravityField(ally)&&Math.hypot(ally.x-healer.x,ally.y-healer.y)<=84){
+          ally.hp=Math.min(ally.maxHp,ally.hp+ally.maxHp*.08);
+          ally.healLock=3;
         }
       }
       this.effects.push({kind:'heal',x:healer.x,y:healer.y,ttl:.55,max:.55});
@@ -1223,6 +1283,11 @@ class Game {
     this.freezeTimer=Math.max(0,this.freezeTimer-dt);
     this.boostTimer=Math.max(0,this.boostTimer-dt);
     if((wasFrozen&&!this.freezeTimer)||(wasBoosted&&!this.boostTimer))this.revision++;
+    for(const key of Object.keys(this.cardCooldowns)){
+      const before=this.cardCooldowns[key];
+      this.cardCooldowns[key]=Math.max(0,before-dt);
+      if(Math.ceil(before)!==Math.ceil(this.cardCooldowns[key]))this.revision++;
+    }
     this.spawnTimer-=dt;
     while(this.spawned<wave.queue.length&&this.spawnTimer<=0){
       const type=wave.queue[this.spawned];
@@ -1239,6 +1304,7 @@ class Game {
       this.revision++;
       return;
     }
+    if(this.boostTimer===0)this.boostDamage=1;
     const boost=this.boostTimer>0?this.boostRate:1;
     for(const [index,tower] of this.towers.entries()){
       if(!tower) continue;
@@ -1260,14 +1326,21 @@ class Game {
       const stats=this.stats(tower),ascended=tower.ascended;
       let target=null;
       for(const enemy of this.enemies){
-        if(enemy.hp<=0||(target&&enemy.pathLength-enemy.distance>=target.pathLength-target.distance))continue;
+        if(enemy.hp<=0||enemy.entryDelay>0||(target&&enemy.pathLength-enemy.distance>=target.pathLength-target.distance))continue;
         if(Math.hypot(enemy.x-x,enemy.y-y)<=stats.range)target=enemy;
       }
       if(!target) continue;
-      tower.angle=Math.atan2(target.y-y,target.x-x);
       tower.cooldown=1/stats.rate;
       if(this.onSound)this.onSound(ATTACK_CUES[tower.type]);
-      this.hit(target,stats.damage,stats.slow,stats.pierce);
+      const targets=[target],usedRoutes=new Set([target.route]);
+      if(stats.multiLane)for(const enemy of this.enemies){
+        if(targets.length>=stats.multiLane)break;
+        if(enemy.hp>0&&!(enemy.entryDelay>0)&&!usedRoutes.has(enemy.route)&&Math.hypot(enemy.x-x,enemy.y-y)<=stats.range){targets.push(enemy);usedRoutes.add(enemy.route);}
+      }
+      const shotDamage=Math.round(stats.damage*(tower.type==='mortar'&&targets.length>1?.7:1));
+      for(const target of targets){
+      tower.angle=Math.atan2(target.y-y,target.x-x);
+      for(let shot=0;shot<(stats.burst??1);shot++)this.hit(target,Math.round(shotDamage*(stats.burst?.55:1)*(stats.bossBonus&&(target.ability||target.type==='boss')?stats.bossBonus:1)),stats.slow,stats.pierce);
       if(stats.beam){
         const dx=Math.cos(tower.angle),dy=Math.sin(tower.angle);
         this.effects.push({kind:'beam-impact',weapon:tower.type,ascended,x:target.x,y:target.y,color:stats.color,ttl:.35,max:.35});
@@ -1304,7 +1377,7 @@ class Game {
       }
       if(stats.splash){
         for(const enemy of this.enemies){
-          if(enemy!==target&&Math.hypot(enemy.x-target.x,enemy.y-target.y)<=stats.splash) this.hit(enemy,Math.round(stats.damage*.70),stats.slow);
+          if(enemy!==target&&Math.hypot(enemy.x-target.x,enemy.y-target.y)<=stats.splash) this.hit(enemy,Math.round(shotDamage*.70),stats.slow);
         }
       }
       if(!stats.beam){
@@ -1316,10 +1389,12 @@ class Game {
           radius:stats.splash,damage:stats.damage*.22,ttl:stats.fieldDuration,max:stats.fieldDuration,color:stats.color});
       }
     }
+    }
     this.enemies=this.enemies.filter(e=>e.hp>0);
     if(this.spawned===wave.queue.length&&this.enemies.length===0){
       this.gold+=20+Math.min(this.wave,50)*5;
-      if(this.mode==='campaign'&&(this.wave===12||this.wave===18)){
+      if(this.mode==='endless'&&this.wave>200)this.gold+=12000+(this.wave-200)*120;
+      if((this.mode==='campaign'||this.mode==='operation')&&(this.wave===12||this.wave===18)){
         this.gold+=this.wave===12?420:620;
         this.lives=Math.min(this.maxLives,this.lives+6);
       }
@@ -1332,6 +1407,10 @@ class Game {
       this.weather=null;
       for(const tower of this.towers)if(tower)tower.stunned=tower.webbed=tower.frozen=0;
       this.phase=this.wave===this.waveCount?'won':'between';
+      if(this.mode==='operation'){
+        if(this.phase==='between')this.captureOperationCheckpoint();
+        else this.operationCheckpoint=null;
+      }
       this.onSound?.('wave-clear');
       this.revision++;
     }
@@ -2220,6 +2299,7 @@ function drawFrostShot(ctx,e,sx,sy,angle,t,detailed){
   }
   const age=(t-flight)/(1-flight);
   flash(ctx,tx,ty,(ascended?25:17)+age*7,color);
+  if(e.radius)ring(ctx,tx,ty,e.radius*(.2+.8*age),'#bceaff',2.5*(1-age)+.5);
   if(ascended){
     const r=7+age*16;
     ctx.beginPath();
@@ -2535,7 +2615,12 @@ function drawEffect(ctx,e,detailed=true){
     else if(kind==='storm'||kind==='tesla')drawDischarge(ctx,e,sx,sy,t,detailed);
     else if(kind==='cannon'||kind==='mortar'||kind==='gravity')drawBallistic(ctx,e,sx,sy,angle,t,detailed);
     else if(kind==='frost')drawFrostShot(ctx,e,sx,sy,angle,t,detailed);
-    else drawBoltShot(ctx,e,sx,sy,angle,t,detailed);
+    else if(kind==='arrow'){
+      for(let bolt=0;bolt<3;bolt++){
+        const spread=(bolt-1)*5;
+        drawBoltShot(ctx,{...e,tx:tx-Math.sin(angle)*spread,ty:ty+Math.cos(angle)*spread},sx,sy,angle,Math.max(0,t-bolt*.06),detailed);
+      }
+    }else drawBoltShot(ctx,e,sx,sy,angle,t,detailed);
   }
   ctx.restore();
 }
@@ -2930,6 +3015,22 @@ function drawLightningBatch(ctx,effects){
   ctx.restore();
 }
 
+function drawAirRaidRoutes(c,game,terrain,info){
+  if(!info.queue.some(type=>type==='ashbat'||type==='skyray'))return;
+  c.save();c.lineWidth=2;c.strokeStyle='#dfa8ef88';c.setLineDash([7,11]);
+  for(let index=0;index<info.lanes;index++){
+    if(terrain.routes[index].name==='东线')continue;
+    const route=terrain.airRoutes[index];traceRoad(c,route.points);c.stroke();
+    const [entryX,entryY]=terrain.routes[index].points[0];
+    const x=Math.max(60,Math.min(terrain.width-75,entryX)),y=Math.max(24,Math.min(terrain.height-22,entryY));
+    const incoming=game.enemies.filter(e=>e.route===index&&e.directFlight&&e.entryDelay>0);
+    const label=incoming.length?'空袭预警 '+Math.ceil(Math.min(...incoming.map(e=>e.entryDelay)))+'s':'空袭航路';
+    c.setLineDash([]);c.font='bold 13px system-ui';c.fillStyle='#241d32e8';c.fillRect(x-42,y-13,92,23);
+    c.fillStyle=incoming.length?'#fff0c7':'#e8c9f3';c.fillText(label,x-37,y+3);c.setLineDash([7,11]);
+  }
+  c.restore();
+}
+
 function createField(canvas){
   const c=canvas.getContext('2d');
   const maps=new Map();
@@ -2944,6 +3045,7 @@ function createField(canvas){
     }
     if(!maps.has(key))maps.set(key,makeMap(terrain,lanes));
     c.drawImage(maps.get(key),0,0);
+    drawAirRaidRoutes(c,game,terrain,info);
     if(game.weather?.active)drawSnowWeather(c,terrain,game.weather);
     if(info.boss){
       c.save();traceRoad(c,terrain.routes[info.route??info.boss.route].points);
@@ -3020,7 +3122,7 @@ function drawSnowWeather(c,{width,height},{type,remaining}){
 
 
 const saveKey='ember-gate-defense-td:progress';
-const saveVersion=11;
+const saveVersion=12;
 const GAME_SPEEDS=Object.freeze([1,2,3,5]);
 const preExpansionSlotCount=45;
 const previousSlotCount=49;
@@ -3029,7 +3131,7 @@ const oldDeepValleyLength=365;
 const legacyKey=mode=>mode==='campaign'?saveKey:saveKey+':'+mode;
 const storageKey=mode=>legacyKey(mode)+':v'+saveVersion;
 const towerFields=['type','damage','speed','damageLost','speedLost','ascended','reinforcement','spent','cooldown','angle','stunned','webbed','frozen'];
-const enemyFields=['type','route','distance','hp','shield','age','slow','stunned','poison','poisonDamage','healTimer','boosted','abilityAt','abilityUntil'];
+const enemyFields=['type','route','distance','hp','shield','age','slow','stunned','poison','poisonDamage','healTimer','healLock','entryDelay','bountyPaid','boosted','abilityAt','abilityUntil'];
 const gameFields=['gold','lives','wave','kills','phase','spawned','spawnTimer'];
 
 function pick(source,fields){
@@ -3040,11 +3142,12 @@ function storeProgress(storage,game,speed){
   if(!storage)return false;
   try{
     storage.setItem(storageKey(game.mode),JSON.stringify({
-      version:saveVersion,speed,mode:game.mode,
+      version:saveVersion,speed,mode:game.mode,operationCheckpoint:game.operationCheckpoint,
       game:{
         ...pick(game,gameFields),
         combatTime:game.combatTime,legacyEndlessWave:game.legacyEndlessWave,
-        soloRaid:game.soloRaid,
+        soloRaid:game.soloRaid,legacyFormation:game.legacyFormation,
+        cardCooldowns:game.cardCooldowns,cardUses:game.cardUses,boostDamage:game.boostDamage,
         fortificationLevel:game.fortificationLevel,
         cards:game.cards,freezeTimer:game.freezeTimer,boostTimer:game.boostTimer,boostRate:game.boostRate,weather:game.weather,
         towers:game.towers.map(tower=>tower&&pick(tower,towerFields)),
@@ -3094,7 +3197,7 @@ function loadProgress(storage,mode='campaign'){
     const key=legacyKey(mode);
     const previous=mode==='snow'?null:
       storage?.getItem(key+':v10')??storage?.getItem(key+':v9')??storage?.getItem(key+':v8')??storage?.getItem(key+':v7')??storage?.getItem(key+':v6')??storage?.getItem(key+':v5')??storage?.getItem(key+':v4')??storage?.getItem(key+':v3')??storage?.getItem(key+':v2')??storage?.getItem(key);
-    let saved=JSON.parse(stored??previous??'null');
+    let saved=JSON.parse(stored??storage?.getItem(key+':v11')??previous??'null');
     if(!saved||!GAME_SPEEDS.includes(saved.speed))return null;
     const classicEnd=WAVES.length;
     const combined=saved.version===10&&saved.mode==='campaign'&&saved.game&&(
@@ -3127,7 +3230,8 @@ function loadProgress(storage,mode='campaign'){
       (saved.version<8||state.soloRaid===true);
     const combatTime=saved.version>=6?state.combatTime:state.wave===0?0:null;
     if(combatTime!==null&&!isNonnegative(combatTime))return null;
-    const wave=state.wave>0?waveFor(mode,state.wave,legacyEndlessWave,soloRaid):null;
+    const legacyFormation=endless&&['active','lost','between'].includes(state.phase)&&(saved.version<12||state.legacyFormation===true);
+    const wave=state.wave>0?waveFor(mode,state.wave,legacyEndlessWave,soloRaid,legacyFormation):null;
     const lateArsenalUnlocked=endless&&(state.phase==='between'?state.wave:state.wave-1)>=ENDLESS_ARSENAL_WAVE;
     const validPhase={
       ready:state.wave===0&&state.lives>0,
@@ -3141,7 +3245,7 @@ function loadProgress(storage,mode='campaign'){
        !isInteger(state.spawned,0,wave?.queue.length??0)||!Array.isArray(state.enemies)||
        state.enemies.length>state.spawned||
        (!['active','lost'].includes(state.phase)&&state.enemies.length!==0))return null;
-    Object.assign(game,pick(state,gameFields),{fortificationLevel,combatTime,legacyEndlessWave,soloRaid});
+    Object.assign(game,pick(state,gameFields),{fortificationLevel,combatTime,legacyEndlessWave,soloRaid,legacyFormation});
     if(legacy&&game.phase==='won'){
       game.phase='between';
       game.gold+=420;
@@ -3159,14 +3263,25 @@ function loadProgress(storage,mode='campaign'){
       const cards={barrage:0,surge:0,...state.cards};
       if(preBalanceSave)cards.cataclysm=state.cards?.meteor;
       const boostRate=state.boostRate??1.8;
-      const surge=lateArsenalUnlocked&&boostRate===SKILLS.surge.rate;
+      const surge=lateArsenalUnlocked&&[2.5,SKILLS.surge.rate].includes(boostRate);
       if(!Object.keys(SKILLS).every(key=>isInteger(cards[key],0,SKILLS[key].price&&!lateArsenalUnlocked?0:CARD_LIMIT))||
-         (!surge&&boostRate!==1.8)||!isNonnegative(state.freezeTimer)||state.freezeTimer>4||
+         (!surge&&boostRate!==1.8)||!isNonnegative(state.freezeTimer)||state.freezeTimer>SKILLS.freeze.duration||
          !isNonnegative(state.boostTimer)||state.boostTimer>(surge?SKILLS.surge.duration:9))return null;
       game.cards=pick(cards,Object.keys(SKILLS));
       game.freezeTimer=state.freezeTimer;
       game.boostTimer=state.boostTimer;
       game.boostRate=boostRate;
+      const boostDamage=state.boostDamage??1;
+      if(![1,1.6].includes(boostDamage)||boostDamage!==1&&!surge)return null;
+      game.boostDamage=boostDamage;
+      for(const [field,limit] of [['cardCooldowns',null],['cardUses',100000]]){
+        const values=state[field]??{};
+        if(!values||typeof values!=='object'||Array.isArray(values)||Object.keys(values).some(key=>!Object.hasOwn(SKILLS,key)))return null;
+        for(const [key,value] of Object.entries(values)){
+          if(field==='cardCooldowns'?!isNonnegative(value)||value>(SKILLS[key].cooldown??0):!isInteger(value,0,SKILLS[key].perWave??limit))return null;
+        }
+        game[field]={...values};
+      }
     }
     if(state.weather!=null){
       const {type,remaining,active}=state.weather;
@@ -3196,12 +3311,27 @@ function loadProgress(storage,mode='campaign'){
       }
       if(hp>enemy.maxHp||shield>enemy.maxShield)return null;
       const {route}=snapshot;
-      const distance=olderSave&&route===4?snapshot.distance/oldDeepValleyLength*map.routes[route].length:snapshot.distance;
+      let distance=olderSave&&route===4?snapshot.distance/oldDeepValleyLength*map.routes[route].length:snapshot.distance;
+      if(saved.version<12&&enemy.directFlight){
+        const [x,y]=map.routes[route].points[0];
+        distance+=enemy.pathLength-Math.hypot(x-map.goal[0],y-map.goal[1]);
+      }
       const restored=pick(snapshot,enemyFields);
       if(snapshot.type==='boss'&&!isNonnegative(restored.abilityAt)){
         restored.abilityAt=Math.max(enemy.abilityAt,snapshot.age+1.2);
       }
-      Object.assign(enemy,restored,{distance,hp,shield,stunned:snapshot.stunned??0},pointAt(distance,route,enemyRoutes(enemy,map)));
+      if(!isNonnegative(snapshot.bountyPaid??0)||(snapshot.bountyPaid??0)>Math.floor(enemy.bounty*.6)||!isNonnegative(snapshot.healLock??0)||(snapshot.healLock??0)>3||!isNonnegative(snapshot.entryDelay??0)||(snapshot.entryDelay??0)>6)return null;
+      Object.assign(enemy,restored,{distance,hp,shield,bountyPaid:snapshot.bountyPaid??0,healLock:snapshot.healLock??0,entryDelay:snapshot.entryDelay??0,stunned:snapshot.stunned??0},pointAt(distance,route,enemyRoutes(enemy,map)));
+    }
+    if(mode==='operation'&&saved.operationCheckpoint!=null){
+      const checkpoint=saved.operationCheckpoint;
+      const expected=['active','lost'].includes(state.phase)?state.wave-1:state.wave;
+      if(!checkpoint||checkpoint.wave!==expected||!['ready','between'].includes(checkpoint.phase))return null;
+      const retryEnvelope={version:saveVersion,mode,speed:saved.speed,game:{...checkpoint,
+        fortificationLevel:0,freezeTimer:0,boostTimer:0,boostRate:1.8,enemies:[]}};
+      const retry=loadProgress({getItem:key=>key===storageKey(mode)?JSON.stringify(retryEnvelope):null},mode);
+      if(!retry)return null;
+      game.operationCheckpoint=JSON.parse(JSON.stringify(checkpoint));
     }
     let gravityCleanup=null;
     if(endless&&game.towerCount('gravity')>ENDLESS_GRAVITY_LIMIT){
@@ -3232,7 +3362,7 @@ const finiteRanks=Object.fromEntries(Object.entries({campaign:WAVES,snow:SNOW_WA
   minTime:Math.floor(1000*waves.reduce((time,wave)=>time+.28+(wave.queue.length-1)*wave.gap,0)),
 }]));
 const campaignKillCap=finiteRanks.campaign.killCap;
-const rankWaveCount=mode=>finiteRanks[mode]?.count;
+const rankWaveCount=mode=>mode==='operation'?WAVES.length:finiteRanks[mode]?.count;
 
 const isRankMode=mode=>mode==='campaign'||mode==='snow'||mode==='endless';
 const hasScore=({waves,kills})=>waves>0||kills>0;
@@ -3270,7 +3400,7 @@ function outranks(mode,score,previous){
 }
 
 function createBestRecords(storage){
-  const best={campaign:blankScore,snow:blankScore,endless:blankScore};
+  const best={campaign:blankScore,snow:blankScore,endless:blankScore,operation:blankScore};
   function get(mode){
     try{
       const stored=JSON.parse(storage?.getItem(recordKey+':'+mode)??'null');
@@ -3464,7 +3594,7 @@ function preparingEndlessCheckpoint(game){
 }
 
 function advanceAutoWave(game,remaining,elapsed,enabled,canAdvance){
-  if(game.phase!=='between'||!enabled||preparingEndlessCheckpoint(game))return AUTO_WAVE_DELAY;
+  if(game.mode==='operation'||game.phase!=='between'||!enabled||preparingEndlessCheckpoint(game))return AUTO_WAVE_DELAY;
   if(!canAdvance)return remaining;
   const next=Math.max(0,remaining-elapsed);
   if(next>0)return next;
@@ -3516,8 +3646,8 @@ window.addEventListener('pageshow',event=>{
 let progressStorage=null;
 try{progressStorage=window.localStorage;}catch{}
 const modeKey='ember-gate-defense-td:mode';
-const gameModes=['campaign','snow','endless'];
-const endMode={campaign:'snow',snow:'endless',endless:'campaign'};
+const gameModes=['campaign','snow','endless','operation'];
+const endMode={campaign:'snow',snow:'endless',endless:'campaign',operation:'campaign'};
 const autoKey=mode=>'ember-gate-defense-td:auto:'+mode;
 function loadAuto(mode){try{return progressStorage?.getItem(autoKey(mode))==='true';}catch{return false;}}
 let initialMode='campaign';
@@ -3563,6 +3693,15 @@ function positionSkillPanel(){
 
 positionSkillPanel();
 phoneLayout.addEventListener('change',positionSkillPanel);
+let tacticsFrame=0;
+function alignTactics(){
+  tacticsFrame=0;
+  const side=tacticalSidebar.getBoundingClientRect(),battle=battlePanel.getBoundingClientRect();
+  const offset=side.left>=battle.right-1?Math.max(0,el('board-viewport').getBoundingClientRect().top-side.top):0;
+  tacticalSidebar.style.paddingTop=Math.round(offset)+'px';
+}
+function scheduleTactics(){if(!tacticsFrame)tacticsFrame=requestAnimationFrame(alignTactics);}
+window.addEventListener('resize',scheduleTactics);
 const towerNumber=new Intl.NumberFormat('zh-CN',{maximumFractionDigits:2});
 const formatDamage=value=>towerNumber.format(value);
 const formatRate=value=>towerNumber.format(value)+' 次/秒';
@@ -3714,6 +3853,7 @@ const slots = SLOTS.map((_,index)=>{
   const button=document.createElement('button');
   button.type='button';
   button.className='slot';
+  button.dataset.slot=String(index);
   button.addEventListener('pointerenter',()=>{hovering=index;});
   button.addEventListener('pointerleave',()=>{if(hovering===index)hovering=null;});
   button.addEventListener('focus',()=>{focused=index;});
@@ -3723,6 +3863,18 @@ const slots = SLOTS.map((_,index)=>{
   return button;
 });
 
+const shopCategories={all:'全部',fire:'持续火力',area:'范围清场',control:'控制辅助',pierce:'破甲狙击'};
+let shopCategory='all';
+for(const [key,label] of Object.entries(shopCategories)){
+  const button=document.createElement('button');button.type='button';button.textContent=label;
+  button.dataset.category=key;button.setAttribute('aria-pressed',String(key==='all'));
+  button.addEventListener('click',()=>{shopCategory=key;filterShop();});
+  el('shop-categories').append(button);
+}
+function filterShop(){
+  for(const [type,button] of shop)button.hidden=shopCategory!=='all'&&TOWERS[type].category!==shopCategory;
+  for(const button of el('shop-categories').children)button.setAttribute('aria-pressed',String(button.dataset.category===shopCategory));
+}
 const shop = Object.entries(TOWERS).map(([type,spec],index)=>{
   const button=document.createElement('button');
   button.type='button';
@@ -3814,11 +3966,17 @@ el('board').addEventListener('pointermove',event=>{
 el('board').addEventListener('pointerleave',event=>{
   if(event.pointerType!=='touch'&&event.pointerType!=='pen')aim=null;
 });
+let boardPointer='mouse';
+el('board').addEventListener('pointerdown',event=>{boardPointer=event.pointerType;},true);
 el('board').addEventListener('click',event=>{
-  if(!targeting||event.target.closest('.slot'))return;
-  const {x,y}=boardPoint(event);
-  targetCataclysm(x,y,event.pointerType==='touch'||event.pointerType==='pen');
-});
+  if(!targeting)return;
+  event.preventDefault();event.stopImmediatePropagation();
+  const slot=event.target.closest('.slot');
+  const point=event.detail===0&&slot?{x:game.pads[Number(slot.dataset.slot)][0],y:game.pads[Number(slot.dataset.slot)][1]}:boardPoint(event);
+  const pointer=event.pointerType||boardPointer;
+  targetCataclysm(point.x,point.y,pointer==='touch'||pointer==='pen');
+  sync();
+},true);
 
 const upgradePanel=el('upgrade');
 function positionUpgrade(){
@@ -3932,6 +4090,7 @@ function choose(type){
     return;
   }
   clearAim();
+  if(shop.find(([key])=>key===type)?.[1].hidden){shopCategory='all';filterShop();}
   const moveFocus=el('upgrade').contains(document.activeElement);
   chosen=chosen===type ? null : type;
   inspected=null;
@@ -3992,6 +4151,12 @@ function toggleWave(){
   if(game.wave!==before)flashWaveEntrances();
 }
 
+el('retry-operation').addEventListener('click',()=>{
+  if(!game.retryOperation())return;
+  paused=false;chosen=inspected=touchPad=null;clearAim();
+  el('end-dialog').close();saveProgress();sync();
+  showNotice('已恢复本关开战前的布防，准备好后重新开战。');
+});
 let resetToCheckpoint=false;
 function requestReset(checkpoint=false){
   if(!game.wave&&!game.fortificationLevel&&!game.towers.some(Boolean)){
@@ -4216,6 +4381,12 @@ function sync(){
   const {mode,map,stage}=game;
   const info=stage===wave?game.waveInfo:waveFor(mode,stage);
   const endless=mode==='endless';
+  el('mode-help').textContent=mode==='operation'?'关卡挑战 · 共 24 关 · 通关自动存进度，失败可恢复本关布防重试。':endless&&stage>200?'分散攻势 · 清波补给 '+formatDamage(12000+(stage-200)*120)+' 金 · 飞行怪入场预警 6 秒 · 虚线为空袭航路':'';
+  el('mode-help').hidden=!el('mode-help').textContent;
+  el('auto-wave').hidden=mode==='operation';
+  el('open-rank').hidden=el('end-rank').hidden=mode==='operation';
+  scheduleTactics();
+  const hasBoss=!!info.boss||info.queue.includes('boss');
   if(phase!=='active')clearAim();
   updateMap(map);
   updateWeather();
@@ -4322,21 +4493,25 @@ function sync(){
     const skill=SKILLS[key];
     const boosting=key==='surge'||key==='overdrive';
     const boostActive=boosting&&game.boostTimer>0;
+    const cooldown=Math.ceil(game.cardCooldowns[key]??0),used=game.cardUses[key]??0;
+    const limitReached=used>=(skill.perWave??Infinity);
+    const replaceSmall=key==='surge'&&game.boostRate===1.8;
     const active=key==='freeze'?game.freezeTimer>0:boostActive&&game.boostRate===(skill.rate??1.8);
     const needsBattle=count>0&&key!=='repair'&&phase!=='active'&&!game.finished;
-    button.disabled=!count||game.finished||(key==='repair'?lives===game.maxLives:phase!=='active'||active||boostActive||(key==='barrage'&&!game.enemies.length));
+    button.disabled=!count||game.finished||(key==='repair'?lives===game.maxLives:phase!=='active'||cooldown>0||limitReached||active&& !replaceSmall||boostActive&&!replaceSmall||(key==='barrage'&&!game.enemies.length));
     if(buy){
       buy.disabled=!game.canBuyCard(key);
-      buy.textContent=count>=CARD_LIMIT?'库存已满':`购买 · ${formatDamage(skill.price)} 金`;
-      buy.setAttribute('aria-label',`购买${skill.name} · ${formatDamage(skill.price)} 金币${count>=CARD_LIMIT?' · 库存已满':''}`);
+      buy.textContent=count>=CARD_LIMIT?'库存已满':`购买 · ${formatDamage(game.cardPrice(key))} 金`;
+      buy.setAttribute('aria-label',`购买${skill.name} · ${formatDamage(game.cardPrice(key))} 金币${count>=CARD_LIMIT?' · 库存已满':''}`);
     }
     button.querySelector('.card-reason').hidden=!needsBattle;
     button.setAttribute('aria-pressed',String(!!SKILLS[key].targeted&&targeting));
     button.setAttribute('aria-label',SKILLS[key].name+'，剩余 '+count+' 张。'+(needsBattle?'仅战斗中可用。':'')+SKILLS[key].description);
     button.classList.toggle('skill-active',active);
-    button.querySelector('.card-stock').textContent=active?'生效中':count;
+    button.querySelector('.card-stock').textContent=active?'生效中':cooldown?cooldown+'s':limitReached?'本波用尽':count;
+    button.title=skill.description+(limitReached?' 本波次数已用尽。':cooldown?` 冷却剩余 ${cooldown} 秒。`:'');
   }
-  el('skill-hint').textContent=targeting?'点击战场施放天罚裂隙。再次点击卡片可取消。':'击杀敌军可掉落卡片，每种最多存 5 张。';
+  el('skill-hint').textContent=targeting?'点击战场施放天罚裂隙。再次点击卡片可取消。':'每种最多 5 张 · 小过载每波限 2 次；大过载可替换小过载。';
   const coverage=coveredSlots(preview,chosen,game.pads);
   slots.forEach((button,index)=>{
     const tower=game.towers[index];
@@ -4405,11 +4580,12 @@ function sync(){
   if(game.finished&&!studyDialog.open&&!el('end-dialog').open){
     el('end-label').textContent=phase==='won'?'VICTORY':'DEFEAT';
     el('end-title').textContent=phase==='won'?'防线守住了！':'要塞失守';
-    el('end-mode').textContent={campaign:'进入雪地战役',snow:'进入无尽模式',endless:'返回战役'}[mode];
+    el('end-mode').textContent={campaign:'进入雪地战役',snow:'进入无尽模式',endless:'返回战役',operation:'返回原版战役'}[mode];
     el('end-detail').textContent=phase==='won'?
       `你击退了所有 ${game.waveCount} 波敌军。${game.combatTime>0?` 通关用时 ${formatRunTime(Math.round(game.combatTime*1000))}。`:''}`:
       '敌军在第 '+wave+' 波攻破了要塞。';
     el('end-stats').innerHTML=`<span><strong>${game.kills}</strong>击杀</span><span><strong>${lives}</strong>剩余生命</span><span><strong>${gold}</strong>剩余黄金</span>`;
+    el('retry-operation').hidden=mode!=='operation'||phase!=='lost'||!game.operationCheckpoint;
     const checkpoint=el('end-checkpoint');
     checkpoint.hidden=!checkpointUnlocked;
     checkpoint.textContent=`从第 ${ENDLESS_CHECKPOINT_WAVE} 波开始 · ${formatDamage(ENDLESS_CHECKPOINT_GOLD)} 金币`;
@@ -4515,7 +4691,7 @@ requestAnimationFrame(frame);
   <section class="battle" aria-labelledby="map-title">
     <header class="map-header"><div><div class="eyebrow"><span id="sector-id">CHAPTER 01</span> <i></i> <span id="sector-name">THE ASHEN PASS</span></div><h2 id="map-title">灰烬隘口</h2></div><span id="phase" class="phase"><i></i>备战中</span></header>
     <div class="battle-controls">
-      <div class="mode-tabs" role="group" aria-label="选择游戏模式"><button id="mode-campaign" type="button" aria-pressed="true">原版战役</button><button id="mode-snow" type="button" aria-pressed="false">雪地战役</button><button id="mode-endless" type="button" aria-pressed="false">无尽模式</button></div>
+      <div class="mode-tabs" role="group" aria-label="选择游戏模式"><button id="mode-campaign" type="button" aria-pressed="true">原版战役</button><button id="mode-snow" type="button" aria-pressed="false">雪地战役</button><button id="mode-endless" type="button" aria-pressed="false">无尽模式</button><button id="mode-operation" type="button" aria-pressed="false">关卡挑战</button></div>
       <div class="wave-controls" role="group" aria-label="战斗控制">
         <button id="start" class="primary" type="button"><svg><use href="#play"/></svg><span>开始第 1 波</span></button>
         <button id="auto-wave" class="speed-button auto-wave" type="button" aria-pressed="false" title="开启后，下一波将自动开始">连续战斗 · 关</button>
@@ -4536,6 +4712,7 @@ requestAnimationFrame(frame);
     </div>
     <p id="wave-summary" class="wave-summary" aria-label="本波敌军和路线"></p>
     <div id="weather-panel" class="weather-panel" hidden><strong id="weather-title" aria-live="polite"></strong><span id="weather-detail"></span><span id="weather-timer"></span></div>
+    <p id="mode-help" class="mode-help" hidden></p>
     <div class="board-viewport" id="board-viewport">
     <div class="board" id="board" aria-label="灰烬隘口战场">
       <canvas id="field" width="900" height="530" aria-hidden="true"></canvas>
@@ -4569,6 +4746,7 @@ requestAnimationFrame(frame);
   <aside class="sidebar" aria-label="战术控制台">
     <section class="panel build-panel" aria-labelledby="build-title">
       <header class="section-heading"><div class="eyebrow">ARSENAL</div><h2 id="build-title">防御塔</h2><span class="dock-tip">横滑选塔 · 再点取消</span></header>
+      <div id="shop-categories" class="shop-categories" role="group" aria-label="炮塔分类"></div>
       <div id="shop" class="shop"></div>
       <div id="shop-hint" class="shop-hint"><svg><use href="#target"/></svg> 选择炮塔后可连续建造。</div>
     </section>
@@ -4615,6 +4793,7 @@ requestAnimationFrame(frame);
   <button id="end-rank" class="speed-button end-mode" type="button">个人纪录与排行榜</button>
   <button id="end-mode" class="speed-button end-mode" type="button">进入无尽模式</button>
   <button id="end-checkpoint" class="speed-button end-mode" type="button" hidden></button>
+  <button id="retry-operation" class="primary" type="button" hidden>恢复布防 · 重试本关</button>
   <button id="end-reset" class="primary" type="button"><svg><use href="#reset"/></svg> 再玩一局</button>
 </dialog>
 <dialog id="reset-dialog" class="dialog" aria-labelledby="reset-title" aria-describedby="reset-detail">
