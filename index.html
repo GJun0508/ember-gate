@@ -1226,7 +1226,8 @@ class Game {
     this.spawnTimer-=dt;
     while(this.spawned<wave.queue.length&&this.spawnTimer<=0){
       const type=wave.queue[this.spawned];
-      const route=wave.route??(type===wave.boss?.type?wave.boss.route:this.spawned%wave.lanes);
+      let route=wave.route??(type===wave.boss?.type?wave.boss.route:this.spawned%wave.lanes);
+      if(ENEMIES[type].directFlight&&routes[route].name==='东线')route=(route+1)%wave.lanes;
       this.spawn(type,route);
       this.spawned++;
       this.spawnTimer+=wave.gap;
