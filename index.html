@@ -393,6 +393,14 @@ const MAPS=[
   {name:'裂谷要塞',english:'RIFT BASTION',width:1420,height:790,slotCount:SLOTS.length,goal:[1338,608],routes:lastRoutes,first:19,last:24},
   {name:'霜原堡垒',english:'FROSTHOLD',width:1200,height:780,slotCount:snowSlots.length,slots:snowSlots,goal:snowGoal,routes:snowRoutes,first:1,last:50,snow:true},
 ];
+for(const map of MAPS){
+  map.airRoutes=map.routes.map(route=>measureRoute({...route,points:[route.points[0],map.goal]}));
+}
+
+function enemyRoutes(enemy,map){
+  return enemy.directFlight?map.airRoutes:map.routes;
+}
+
 const WEATHER={
   blizzard:{name:'暴雪',description:'敌人移速 −30%，部分雪地怪物免疫',duration:7,moveRate:.70,towerRate:1},
   hail:{name:'冰雹',description:'炮台射速 −25%',duration:6,moveRate:1,towerRate:.75},
@@ -443,6 +451,8 @@ const ENEMIES = {
   shield: {name:'盾卫', skill:'护盾吸收伤害，破甲可穿透', hp:64, speed:65, bounty:18, leak:2, color:'#96b8c6', size:13, barrier:42},
   shaman: {name:'祭司', skill:'登场 2 秒后治疗附近友军，之后每 3 秒治疗一次', hp:53, speed:62, bounty:21, leak:1, color:'#b3c78d', size:12, healInterval:3},
   shade: {name:'影兽', skill:'减速持续时间缩短 70%', hp:46, speed:117, bounty:16, leak:1, color:'#c9b5e0', size:10, tenacity:.7},
+  ashbat: {name:'灰翼蝠',skill:'无视地形，从入口沿直线飞向要塞',hp:40,speed:83,bounty:22,leak:1,color:'#d3a3e7',size:12,flying:true,directFlight:true},
+  skyray: {name:'铁甲飞鳐',skill:'沿直线突袭要塞，装甲抵挡 25% 普通伤害',hp:105,speed:61,bounty:32,leak:2,color:'#8cc9db',size:17,armor:.25,flying:true,directFlight:true},
   ironward: {name:'铁幕卫士',skill:'重型护盾吸收伤害，装甲抵挡 45% 普通伤害',hp:138,speed:48,bounty:30,leak:3,color:'#e0906a',size:17,armor:.45,barrier:95},
   riftstalker: {name:'裂隙猎手',skill:'高速冲刺，减速持续时间缩短 85%',hp:56,speed:124,bounty:24,leak:2,color:'#74e3d9',size:12,dash:true,tenacity:.85},
   boss: {name:'余烬巨兽', skill:'震地眩晕附近炮台，半血后狂暴提速', hp:1150, speed:48, bounty:130, leak:5, color:'#ed8b5c', size:23, rage:true},
@@ -598,13 +608,15 @@ function waveFor(mode,number,legacy=false,soloRaid=false){
   const boss=legacy&&number%5===0;
   const queue=Array.from({length:count},(_,i)=>{
     if(boss&&i%19===10)return 'boss';
+    if(elites&&i%16===1)return 'ashbat';
+    if(elites&&i%16===9)return 'skyray';
     if(elites&&i%8===4)return 'ironward';
     if(elites&&i%8===6)return 'riftstalker';
     return pool[(i*3+Math.floor(i/5)+number)%pool.length];
   });
   const note=boss?'首领波 · 五路进攻 · '+endlessTowerAttackNote:'五路进攻 · 敌军持续增强';
   const gap=Math.max(.27,.63-number*.018)-Math.min(.06,lateWaves*.002);
-  endlessWave={name:boss?'无尽 · 巨兽攻势':'无尽 · 裂谷守卫',note:note+lateNote+(elites?' · 铁幕卫士与裂隙猎手':''),queue,gap,lanes:5,mobHealthMultiplier};
+  endlessWave={name:boss?'无尽 · 巨兽攻势':'无尽 · 裂谷守卫',note:note+lateNote+(elites?' · 铁幕卫士、裂隙猎手与直线空袭':''),queue,gap,lanes:5,mobHealthMultiplier};
   return endlessWave;
 }
 
@@ -970,8 +982,9 @@ class Game {
     const maxShield=spec.ability==='barrier'?Math.round(maxHp*.12):Math.round((spec.barrier??0)*scale);
     const bounty=spec.ability?raid.bounty:Math.round(spec.bounty*(this.mode==='endless'?
       (type==='boss'?endlessRewardMultiplier(this.wave):endlessMobRewardMultiplier(this.wave)):1));
-    const enemy={...spec,type,route,distance:0,maxHp,hp:maxHp,maxShield,shield:maxShield,bounty,age:0,slow:0,stunned:0,
-      poison:0,poisonDamage:0,healTimer:spec.healInterval?2:0,boosted:false,...pointAt(0,route,this.map.routes)};
+    const routes=enemyRoutes(spec,this.map);
+    const enemy={...spec,type,route,pathLength:routes[route].length,distance:0,maxHp,hp:maxHp,maxShield,shield:maxShield,bounty,age:0,slow:0,stunned:0,
+      poison:0,poisonDamage:0,healTimer:spec.healInterval?2:0,boosted:false,...pointAt(0,route,routes)};
     if(spec.ability)Object.assign(enemy,{
       leak:Math.min(18,7+raid.tier),speed:spec.speed+Math.min(12,(raid.tier-1)*1.4),shield:0,
     });
@@ -1103,9 +1116,9 @@ class Game {
       if(e.healInterval)e.healTimer-=actingTime;
       e.boosted=!!((e.dash&&e.age%3.8>2.65)||(e.rage&&e.hp<=e.maxHp/2)||(e.ability==='rush'&&e.abilityUntil>e.age));
       e.distance+=e.speed*actingTime*(this.freezeTimer>0?.15:e.slow>0?.55:1)*(e.boosted ? 1.60 : 1)*(e.snowAdapted?1:moveRate);
-      Object.assign(e,pointAt(e.distance,e.route,routes));
+      Object.assign(e,pointAt(e.distance,e.route,enemyRoutes(e,this.map)));
       if(!actingTime)continue;
-      if(e.distance>=routes[e.route].length){
+      if(e.distance>=e.pathLength){
         e.hp=0;
         this.lives=Math.max(0,this.lives-e.leak);
         this.onSound?.('base-hit');
@@ -1246,7 +1259,7 @@ class Game {
       const stats=this.stats(tower),ascended=tower.ascended;
       let target=null;
       for(const enemy of this.enemies){
-        if(enemy.hp<=0||(target&&routes[enemy.route].length-enemy.distance>=routes[target.route].length-target.distance))continue;
+        if(enemy.hp<=0||(target&&enemy.pathLength-enemy.distance>=target.pathLength-target.distance))continue;
         if(Math.hypot(enemy.x-x,enemy.y-y)<=stats.range)target=enemy;
       }
       if(!target) continue;
@@ -1474,8 +1487,30 @@ function paintRaidBoss(ctx,type,step,casting){
   }
 }
 
+function paintAirRaider(ctx,type,step){
+  const heavy=type==='skyray';
+  const edge=heavy?'#263e4b':'#382e49';
+  for(const side of [-1,1]){
+    const tip=side*(13+step*3);
+    shape(ctx,[[3,side*3],[-2,side*7],[-11,tip],[-7,side*6],[-15,side*5],[-8,side*2]],
+      heavy?'#537f92':'#946ca8',edge);
+    shape(ctx,[[1,side*3],[-4,side*6],[-9,tip-side*2],[-5,side*4]],heavy?'#afd9dd':'#d5acdc',null);
+    stroke(ctx,[[2,side*2],[-4,side*7],[-10,tip]],heavy?'#dcf1df':'#d6a2f3',.85);
+  }
+  stroke(ctx,[[-5,0],[-12,2],[-17,step*2]],heavy?'#6c9faf':'#ad85c2',2);
+  shape(ctx,[[-9,0],[-3,-5],[5,-4],[11,-2],[15,0],[11,2],[5,4],[-3,5]],
+    heavy?'#739caa':'#655173',edge);
+  shape(ctx,[[-5,0],[0,-3],[7,-2],[10,0],[7,2],[0,3]],heavy?'#c3d3c6':'#b18bc2',null);
+  if(heavy){
+    stroke(ctx,[[-4,-3],[1,0],[-4,3]],'#345462',1.4);
+    shape(ctx,[[4,-3],[9,-4],[13,0],[9,4],[4,3]],'#547b86',edge);
+  }
+  for(const side of [-1,1])oval(ctx,11,side*1.2,1.2,.7,heavy?'#baf9ff':'#ffdc8c');
+}
+
 function paintEnemy(ctx,type,step,casting){
   ctx.lineJoin='round';ctx.lineCap='round';
+  if(type==='ashbat'||type==='skyray'){paintAirRaider(ctx,type,step);return;}
   if(type==='ironward'){paintIronward(ctx,step);return;}
   if(type==='riftstalker'){paintRiftstalker(ctx,step);return;}
   if(type==='snowstalker'){
@@ -3043,9 +3078,9 @@ function validTower(tower,olderSave,ascensionUnlocked,lateArsenalUnlocked){
     isNonnegative(tower.stunned??0)&&isNonnegative(tower.webbed??0)&&isNonnegative(tower.frozen??0);
 }
 
-function validEnemy(enemy,lanes,routes,olderSave){
+function validEnemy(enemy,lanes,map,olderSave){
   return enemy&&Object.hasOwn(ENEMIES,enemy.type)&&isInteger(enemy.route,0,lanes-1)&&
-    isNonnegative(enemy.distance)&&enemy.distance<(olderSave&&enemy.route===4?oldDeepValleyLength:routes[enemy.route].length)&&
+    isNonnegative(enemy.distance)&&enemy.distance<(olderSave&&enemy.route===4?oldDeepValleyLength:enemyRoutes(ENEMIES[enemy.type],map)[enemy.route].length)&&
     Number.isFinite(enemy.hp)&&enemy.hp>0&&
     ['shield','age','slow','poison','poisonDamage','healTimer'].every(field=>isNonnegative(enemy[field]))&&
     isNonnegative(enemy.stunned??0)&&(enemy.stunned??0)<=SKILLS.cataclysm.stun&&
@@ -3112,7 +3147,7 @@ function loadProgress(storage,mode='campaign'){
       game.lives=Math.min(game.maxLives,game.lives+6);
     }
     const map=game.map;
-    if(!state.enemies.every(enemy=>validEnemy(enemy,wave?.lanes??0,map.routes,olderSave)))return null;
+    if(!state.enemies.every(enemy=>validEnemy(enemy,wave?.lanes??0,map,olderSave)))return null;
     let retiredRefund=0;
     state.towers.forEach((tower,index)=>{
       if(tower?.type==='venom')retiredRefund+=tower.spent;
@@ -3165,7 +3200,7 @@ function loadProgress(storage,mode='campaign'){
       if(snapshot.type==='boss'&&!isNonnegative(restored.abilityAt)){
         restored.abilityAt=Math.max(enemy.abilityAt,snapshot.age+1.2);
       }
-      Object.assign(enemy,restored,{distance,hp,shield,stunned:snapshot.stunned??0},pointAt(distance,route,map.routes));
+      Object.assign(enemy,restored,{distance,hp,shield,stunned:snapshot.stunned??0},pointAt(distance,route,enemyRoutes(enemy,map)));
     }
     let gravityCleanup=null;
     if(endless&&game.towerCount('gravity')>ENDLESS_GRAVITY_LIMIT){
