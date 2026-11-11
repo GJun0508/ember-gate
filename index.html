@@ -338,8 +338,573 @@ kbd{display:inline-block;background:#252b22;color:#cbd0ba;border:1px solid #444c
 #retry-operation{width:100%;margin:9px 0}
 @media(max-width:640px){.battle-controls .mode-tabs{grid-template-columns:repeat(2,minmax(0,1fr))}.mode-help{margin:0 10px 9px;font-size:11px}.shop-categories button{min-height:36px}.sidebar{padding-top:0!important}}
 
+
+.masthead-actions{display:flex;align-items:center;justify-content:flex-end;gap:8px}
+#open-skin-shop{width:auto;white-space:nowrap;color:#ffe2a7}
+#skin-top-balance{font-variant-numeric:tabular-nums;color:#ffd38a}
+#end-skin-points{color:#ffe1a3}
+.skin-dialog{box-sizing:border-box;width:min(690px,calc(100% - 24px));max-height:calc(100dvh - 28px);padding:22px;color:#f0ece1;background:#202628;border:1px solid #58605c;border-radius:16px;overflow:auto;box-shadow:0 18px 70px #101010c9}
+.skin-dialog::backdrop{background:#101416b5}
+.skin-dialog h2,.skin-dialog h3{margin:0}
+.skin-header,.skin-detail{display:flex;align-items:center;justify-content:space-between;gap:14px}
+.skin-header p,.skin-detail p,.skin-rules{color:#c2c9bf;margin:6px 0;font-size:.9rem}
+.skin-header strong{color:#ffda91}
+.skin-options{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:14px 0}
+.skin-choice{padding:10px 6px;border:1px solid #59625e;border-radius:8px;background:#282e30;color:#f0ece1;cursor:pointer}
+.skin-choice strong,.skin-choice small{display:block}
+.skin-choice small{margin-top:4px;color:var(--skin-accent)}
+.skin-choice[aria-pressed=true]{border-color:var(--skin-accent);background:#34383e}
+.skin-detail{margin:8px 0 12px}
+.skin-detail small{color:#dcc799}
+#skin-preview{display:block;width:100%;height:auto;max-height:280px;object-fit:contain;background:#1a2023;border:1px solid #454d4d;border-radius:10px}
+.skin-preview-actions,.skin-purchase-actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:12px}
+.skin-preview-actions button,.skin-purchase-actions button,#open-skin-shop{min-height:40px}
+#skin-status{min-height:1.15em;color:#ffe3ac;margin:8px 0}
+#skin-afford{color:#dfbf8c}
+.skin-confirm{width:min(430px,calc(100% - 24px))}
+.skin-rules summary{cursor:pointer;color:#e4d3a8}
+.skin-rules ul{padding-left:20px}
+@media(max-width:550px){
+  .masthead-actions{gap:5px}
+  #open-skin-shop{padding:5px 7px;font-size:.73rem}
+  .skin-dialog{padding:14px}
+  .skin-choice{font-size:.78rem}
+  .skin-detail{align-items:flex-start;flex-direction:column;gap:2px}
+}
+
 </style>
 <script type="module">
+const SKIN_CATALOG = Object.freeze({
+  eclipse: {type:'sunlance', name:'日蚀熔炉', price:180, accent:'#ffad62', description:'黑铜重装炮座、三瓣散热炮口与白热焰流。'},
+  tempest: {type:'storm', name:'天穹雷狱', price:220, accent:'#b8b6ff', description:'悬浮雷核与三座避雷塔，向多路敌人打出分叉雷弧。'},
+  horizon: {type:'gravity', name:'视界坍缩', price:260, accent:'#e6a4ff', description:'黑曜石底座、交错机械环与向内坍缩的引力脉冲。'},
+});
+
+const clearPoints = {campaign:[180,45], snow:[240,60], operation:[150,35]};
+const milestones = [[100,60],[200,100],[400,160]];
+
+function createSkinProfile(){
+  return {balance:0, owned:{}, equipped:{}, first:{}, claims:{}};
+}
+
+function skinRewardEvents(game){
+  if(game.mode==='endless'){
+    return milestones.filter(([wave])=>game.skinClearedWaves>=wave)
+      .map(([wave,points])=>({key:'endless:'+wave,points}));
+  }
+  if(game.phase!=='won'||!game.skinRunId||!Object.hasOwn(clearPoints,game.mode))return [];
+  return [{key:'victory:'+game.mode+':'+game.skinRunId,mode:game.mode}];
+}
+
+function applySkinRewards(profile,events){
+  let earned=0;
+  let awarded=0;
+  for(const event of events){
+    if(Object.hasOwn(profile.claims,event.key)){
+      awarded+=profile.claims[event.key];
+      continue;
+    }
+    const points=event.mode?clearPoints[event.mode][profile.first[event.mode]?1:0]:event.points;
+    if(event.mode)profile.first[event.mode]=true;
+    profile.claims[event.key]=points;
+    earned+=points;
+    awarded+=points;
+  }
+  profile.balance+=earned;
+  return {earned,awarded};
+}
+
+function changeSkinOwnership(profile,id,action){
+  const skin=SKIN_CATALOG[id];
+  if(!Object.hasOwn(SKIN_CATALOG,id))throw new Error('找不到这款皮肤。');
+  if(action==='buy'&&!profile.owned[id]){
+    if(profile.balance<skin.price)throw new Error('战功积分不足。');
+    profile.balance-=skin.price;
+    profile.owned[id]=true;
+  }
+  if(action==='equip'){
+    if(!profile.owned[id])throw new Error('请先兑换这款皮肤。');
+    profile.equipped[skin.type]=id;
+  }
+  if(action==='default')delete profile.equipped[skin.type];
+}
+
+// All reads and writes use the same object store so tabs share one atomic balance.
+function openSkinLedger(database=globalThis.indexedDB){
+  return new Promise((resolve,reject)=>{
+    if(!database){reject(new Error('当前浏览器无法保存商城进度。'));return;}
+    const request=database.open('ember-gate-skins',1);
+    request.onupgradeneeded=()=>request.result.createObjectStore('profile');
+    request.onerror=()=>reject(request.error);
+    request.onblocked=()=>reject(new Error('请关闭其他游戏标签页后重试。'));
+    request.onsuccess=()=>resolve(request.result);
+  });
+}
+
+async function skinLedgerTransaction(database,change){
+  const db=await database;
+  return new Promise((resolve,reject)=>{
+    const tx=db.transaction('profile',change?'readwrite':'readonly');
+    const store=tx.objectStore('profile');
+    const read=store.get('player');
+    let result,error;
+    read.onsuccess=()=>{
+      const profile=read.result??createSkinProfile();
+      try{
+        result={profile,value:change?.(profile)};
+        if(change)store.put(profile,'player');
+      }catch(cause){error=cause;tx.abort();}
+    };
+    tx.oncomplete=()=>resolve(result);
+    tx.onabort=()=>reject(error??tx.error??new Error('商城进度保存失败，请重试。'));
+  });
+}
+
+const skinParts = new Map();
+let equippedTowerSkins = {};
+const skinMotion = globalThis.matchMedia?.('(prefers-reduced-motion: reduce)');
+const skinColors = {
+  eclipse:{edge:'#7d442b', light:'#ffb96d', hot:'#fff0ba', metal:['#b88a65','#493227','#201b1c']},
+  tempest:{edge:'#565385', light:'#a6bcff', hot:'#ebecff', metal:['#b1b9d1','#4c526e','#242438']},
+  horizon:{edge:'#784792', light:'#d49bff', hot:'#f4d8ff', metal:['#8d7da4','#443852','#1a1426']},
+};
+
+function setTowerSkins(equipped){
+  equippedTowerSkins={...equipped};
+}
+
+function towerSkinId(type){
+  const id=equippedTowerSkins[type];
+  return Object.hasOwn(skinColors,id)?id:null;
+}
+
+function skinPath(ctx,points,fill,stroke,width=1){
+  ctx.beginPath();
+  ctx.moveTo(...points[0]);
+  for(const point of points.slice(1))ctx.lineTo(...point);
+  if(fill){ctx.closePath();ctx.fillStyle=fill;ctx.fill();}
+  if(stroke){ctx.strokeStyle=stroke;ctx.lineWidth=width;ctx.stroke();}
+}
+
+function skinEllipse(ctx,x,y,rx,ry,fill,stroke,width=1,angle=0){
+  ctx.beginPath();
+  ctx.ellipse(x,y,rx,ry,angle,0,Math.PI*2);
+  if(fill){ctx.fillStyle=fill;ctx.fill();}
+  if(stroke){ctx.strokeStyle=stroke;ctx.lineWidth=width;ctx.stroke();}
+}
+
+function skinMetal(ctx,colors,top,bottom){
+  const gradient=ctx.createLinearGradient(0,top,0,bottom);
+  colors.forEach((color,index)=>gradient.addColorStop(index/(colors.length-1),color));
+  return gradient;
+}
+
+function buildSkinPart(paint){
+  const canvas=document.createElement('canvas');
+  canvas.width=canvas.height=192;
+  const ctx=canvas.getContext('2d');
+  ctx.setTransform(2,0,0,2,96,96);
+  paint(ctx);
+  return canvas;
+}
+
+function skinBase(ctx,id,palette){
+  skinEllipse(ctx,4,12,29,20,'#11101780');
+  const shape=id==='eclipse'
+    ?[[-27,-16],[-9,-26],[21,-21],[31,-7],[26,14],[10,24],[-17,23],[-29,12]]
+    :id==='tempest'?[[-26,-14],[10,-27],[30,16],[3,26],[-24,18]]
+    :[[-29,-5],[-20,-22],[8,-26],[29,-14],[30,7],[16,23],[-10,26],[-29,16]];
+  skinPath(ctx,shape,skinMetal(ctx,palette.metal,-25,24),'#120f19',2.2);
+  skinPath(ctx,shape.map(([x,y])=>[x*.84,y*.81-2]),'#292535',palette.edge,1.5);
+  skinEllipse(ctx,0,0,16,15,'#19141c',palette.edge,2.5);
+  for(const [x,y] of shape){
+    const px=x*.78,py=y*.76;
+    skinEllipse(ctx,px,py,2.7,2.1,'#14111a','#ad9ca2',.8);
+    skinPath(ctx,[[px-1,py-1],[px+1,py+1]],null,'#c9b7a6',.6);
+  }
+  for(const side of [-1,1]){
+    for(let i=0;i<4;i++){
+      skinPath(ctx,[[side*19,-6+i*4],[side*24,-8+i*4]],null,'#14121b',2.8);
+      skinPath(ctx,[[side*19,-7+i*4],[side*24,-9+i*4]],null,palette.edge,.9);
+    }
+  }
+}
+
+function skinHead(ctx,id,palette){
+  const metal=skinMetal(ctx,palette.metal,-16,13);
+  if(id==='eclipse'){
+    skinPath(ctx,[[-25,-9],[-17,-15],[2,-14],[13,-9],[28,-9],[31,-5],[31,7],[10,9],[-4,13],[-21,11]],metal,'#151018',2);
+    skinPath(ctx,[[-19,-11],[-2,-10],[6,-5],[-10,-4]],'#d5a57b','#6a3a30');
+    skinPath(ctx,[[-20,0],[-13,-6],[-5,-4],[-5,6],[-15,8]],'#341923',palette.edge,1.2);
+    for(let i=0;i<6;i++)skinPath(ctx,[[-16+i*3,2],[-13+i*3,-3]],null,'#ffaa64',1.5);
+    skinPath(ctx,[[7,-8],[29,-7],[29,7],[8,7]],'#332529','#ad7050');
+    skinPath(ctx,[[7,-2],[30,-2],[30,2],[7,2]],'#f3995f','#351c24');
+  }else if(id==='tempest'){
+    skinPath(ctx,[[-17,-11],[-6,-18],[7,-15],[21,-7],[25,0],[20,8],[6,13],[-14,10],[-21,0]],metal,'#1c1a2e',2);
+    skinPath(ctx,[[1,-7],[22,-5],[25,0],[21,5],[0,7]],'#323650','#a3a8cb');
+    skinPath(ctx,[[4,-2],[24,0],[4,2]],'#bcb8ff','#4e4685',1);
+  }else{
+    skinPath(ctx,[[-23,-11],[-10,-17],[6,-14],[20,-8],[27,-4],[28,5],[11,9],[-6,13],[-22,8]],metal,'#191125',2);
+    skinPath(ctx,[[-13,-8],[-6,-12],[8,-8],[19,-3],[19,3],[-10,6]],'#22192f','#9766aa',1);
+    skinPath(ctx,[[8,-4],[28,-2],[30,1],[28,4],[8,5]],'#624575','#bb8bcf',1);
+  }
+}
+
+function skinPartsFor(id){
+  if(!skinParts.has(id)){
+    const palette=skinColors[id];
+    skinParts.set(id,{
+      base:buildSkinPart(ctx=>skinBase(ctx,id,palette)),
+      head:buildSkinPart(ctx=>skinHead(ctx,id,palette)),
+    });
+  }
+  return skinParts.get(id);
+}
+
+function drawCosmeticTower(ctx,x,y,tower,kick,id,time=performance.now()/1000){
+  const palette=skinColors[id];
+  if(!palette)return false;
+  const parts=skinPartsFor(id);
+  const t=skinMotion?.matches?0:time;
+  const heat=Math.min(1,kick/3);
+  ctx.save();
+  ctx.translate(x,y);
+  if(tower.ascended){
+    skinEllipse(ctx,0,3,35,29,null,palette.edge,3);
+    skinEllipse(ctx,0,3,32,26,null,palette.light,1.3);
+  }
+  ctx.drawImage(parts.base,-48,-48,96,96);
+  ctx.rotate(tower.angle);
+  ctx.translate(-kick,0);
+  ctx.drawImage(parts.head,-48,-48,96,96);
+  if(id==='eclipse'){
+    ctx.globalAlpha*=.68+.16*Math.sin(t*3)+heat*.15;
+    skinEllipse(ctx,-11,0,7,5,palette.light,palette.hot,1);
+    ctx.globalAlpha/=.68+.16*Math.sin(t*3)+heat*.15;
+    for(const side of [-1,1]){
+      const spread=3+heat*8;
+      skinPath(ctx,[[19,side*4],[28,side*(5+spread)],[37,side*(4+spread)],[32,side*3]],
+        '#674330','#d2a078',1.2);
+      skinPath(ctx,[[28,side*(5+spread)],[36,side*(4+spread)]],null,palette.light,1.6);
+    }
+    skinPath(ctx,[[20,-3],[29,-5-heat*5],[39,-2],[36,3],[26,5+heat*3]],'#674330','#d2a078',1.1);
+    skinPath(ctx,[[24,-3-heat*2],[38+heat*2,0],[24,3+heat*2]],palette.light,palette.hot,.85);
+    if(tower.ascended)skinEllipse(ctx,-22,0,5,4,palette.hot,palette.light,1.5);
+  }else if(id==='tempest'){
+    const nodes=[];
+    for(let i=0;i<3;i++){
+      const phase=i*2*Math.PI/3+t*.62;
+      const px=Math.cos(phase)*17,py=Math.sin(phase)*16;
+      nodes.push([px,py]);
+      skinPath(ctx,[[px-3,py+6],[px-6,py-1],[px-1,py-8],[px+4,py-5],[px+4,py+4]],
+        '#53567e','#b9b2e6',1.3);
+      skinEllipse(ctx,px-1,py-6,3,2.4,palette.hot,palette.edge,1);
+    }
+    const core=-6+(tower.ascended?-2:0)+Math.sin(t*2.8)*2;
+    skinEllipse(ctx,0,core,7+heat*3,6+heat*2,palette.light,palette.hot,1.8);
+    for(const [px,py] of nodes){
+      skinPath(ctx,[[0,core],[px*.35+Math.sin(t*20)*3,py*.4-4],[px*.65-2,py*.7],[px-1,py-6]],null,palette.light,1.15);
+    }
+    if(tower.ascended)skinEllipse(ctx,0,core,13,8,null,palette.light,1.3,t*.7);
+  }else{
+    const phase=t*.9;
+    skinEllipse(ctx,-4,0,10,9,'#0e0919',palette.light,1.2);
+    skinEllipse(ctx,-4,0,19,5+Math.abs(Math.sin(phase))*8,null,'#a475bc',2.7,phase);
+    skinEllipse(ctx,-4,0,17,4+Math.abs(Math.cos(phase))*7,null,'#dbc0ed',1.45,-phase*.87);
+    for(let i=0;i<4;i++){
+      const a=phase*1.7+i*Math.PI/2;
+      skinEllipse(ctx,-4+Math.cos(a)*17,Math.sin(a)*12,1.7,1.5,palette.hot);
+    }
+    skinEllipse(ctx,27,0,3+heat*5,3+heat*4,'#1a1029',palette.light,1.4);
+    if(tower.ascended)skinEllipse(ctx,-4,0,24,8,null,palette.light,1.6,phase*.44);
+  }
+  ctx.restore();
+  return true;
+}
+
+function skinArc(ctx,x,y,tx,ty,palette,t,width,detail){
+  const dx=tx-x,dy=ty-y,length=Math.hypot(dx,dy)||1;
+  const count=detail?10:5, points=[[x,y]];
+  for(let i=1;i<count;i++){
+    const p=i/count;
+    const jitter=Math.sin(i*12.1+x*.31+Math.floor(t*32)*2.9)*Math.min(11,length*.18);
+    points.push([x+dx*p-dy/length*jitter,y+dy*p+dx/length*jitter]);
+  }
+  points.push([tx,ty]);
+  skinPath(ctx,points,null,palette.edge,width+7);
+  skinPath(ctx,points,null,palette.light,width+2);
+  skinPath(ctx,points,null,palette.hot,width);
+  if(detail&&length>30){
+    const [a,b]=points[4];
+    skinPath(ctx,[[a,b],[a+dx*.12-dy*.12,b+dy*.12+dx*.12],[a+dx*.2-dy*.16,b+dy*.2+dx*.16]],null,palette.light,1.4);
+  }
+}
+
+function cosmeticEffectId(effect){
+  const type=effect.kind==='gravity-field'?'gravity':effect.kind==='beam-impact'?effect.weapon:effect.kind;
+  return towerSkinId(type);
+}
+
+function drawCosmeticEffect(ctx,e,detailed=true,id=cosmeticEffectId(e)){
+  const palette=skinColors[id];
+  if(!palette)return false;
+  const t=1-Math.max(0,e.ttl/e.max);
+  const {kind,x,y,tx,ty}=e;
+  ctx.save();
+  ctx.globalAlpha*=Math.max(.12,1-t);
+  ctx.lineCap='round';
+  ctx.lineJoin='round';
+  if(kind==='beam-impact'||kind==='gravity-field'){
+    const radius=kind==='gravity-field'?e.radius:16+17*t;
+    const inward=kind==='gravity-field';
+    skinEllipse(ctx,x,y,radius*(inward?1:.4+t*.6),radius*(inward?1:.4+t*.6),
+      inward?'#46306025':null,palette.edge,inward?1.5:4);
+    skinEllipse(ctx,x,y,radius*(inward?.93-t*.37:.2+t*.78),radius*(inward?.93-t*.37:.2+t*.78),
+      null,palette.light,2.2);
+    skinEllipse(ctx,x,y,inward?6+5*(1-t):5+8*t,inward?6:4,palette.hot);
+    if(detailed)for(let i=0;i<9;i++){
+      const angle=i*2.4+(inward?t*6:0),r=radius*(inward?1-t*.64:t);
+      skinEllipse(ctx,x+Math.cos(angle)*r,y+Math.sin(angle)*r,1.8,1.6,palette.light);
+    }
+  }else if(Number.isFinite(tx)&&Number.isFinite(ty)){
+    const dx=tx-x,dy=ty-y,length=Math.hypot(dx,dy)||1,ux=dx/length,uy=dy/length;
+    const reach=e.sourceSlot==null?0:Math.min(length*.7,id==='eclipse'?35:id==='horizon'?28:18);
+    const sx=x+ux*reach,sy=y+uy*reach;
+    if(id==='tempest'){
+      skinArc(ctx,sx,sy,tx,ty,palette,t,e.ascended?2.4:1.35,detailed);
+      skinEllipse(ctx,tx,ty,5+7*t,3+5*t,palette.hot,palette.light,1.7);
+    }else if(id==='eclipse'){
+      const width=(e.ascended?14:9)*(1-t*.58);
+      skinPath(ctx,[[sx,sy],[tx,ty]],null,'#ac452c',width*2.4);
+      skinPath(ctx,[[sx,sy],[tx,ty]],null,palette.light,width*1.45);
+      skinPath(ctx,[[sx,sy],[tx,ty]],null,palette.hot,width*.62);
+      skinEllipse(ctx,sx,sy,width+4,width,palette.hot,palette.light,2);
+      if(detailed)for(let i=0;i<6;i++){
+        const p=(i/6+t*.7)%1,side=i%2?1:-1;
+        const px=sx+(tx-sx)*p,py=sy+(ty-sy)*p;
+        skinPath(ctx,[[px-uy*width*side,py+ux*width*side],[px-ux*14,py-uy*14]],null,'#ffe0a4',1.4);
+      }
+    }else{
+      const p=Math.min(1,t*1.75),px=sx+(tx-sx)*p,py=sy+(ty-sy)*p;
+      skinPath(ctx,[[sx,sy],[px,py]],null,'#7948a6',5);
+      skinEllipse(ctx,px,py,11-4*p,9-3*p,'#21132e',palette.light,2.5);
+      skinEllipse(ctx,px,py,16-4*p,5,null,palette.hot,1.2,Math.atan2(dy,dx));
+      if(p===1)skinEllipse(ctx,tx,ty,12+t*22,12+t*22,null,palette.light,2.4);
+    }
+  }
+  ctx.restore();
+  return true;
+}
+
+
+function setupSkinShop(onEquip){
+  const get=id=>document.getElementById(id);
+  const dialog=get('skin-shop');
+  const canvas=get('skin-preview');
+  const ctx=canvas.getContext('2d');
+  const status=get('skin-status');
+  const confirm=get('skin-confirm');
+  const buttons=new Map();
+  const earnedEvents=new Set();
+  const pendingEvents=new Set();
+  const channel=typeof BroadcastChannel==='function'?new BroadcastChannel('ember-gate-skins'):null;
+  let database;
+  let profile=createSkinProfile();
+  let selected='eclipse';
+  let original=false;
+  let ascended=false;
+  let pending=false;
+  let available=false;
+  let raf=0;
+  let shot=-Infinity;
+  let settlementKey;
+
+  function connection(){
+    if(!database)database=openSkinLedger().catch(error=>{database=null;throw error;});
+    return database;
+  }
+
+  function accept(data){
+    const equippedChanged=JSON.stringify(profile.equipped)!==JSON.stringify(data.equipped);
+    profile=data;
+    available=true;
+    if(settlementKey&&profile.claims[settlementKey]){
+      get('end-skin-points').textContent='本局战功积分 +'+profile.claims[settlementKey]+' · 当前余额 '+profile.balance;
+    }
+    if(equippedChanged){
+      setTowerSkins(profile.equipped);
+      onEquip();
+    }
+    renderShop();
+  }
+
+  async function refresh(){
+    try{accept((await skinLedgerTransaction(connection())).profile);}
+    catch(error){available=false;renderShop();status.textContent=error.message||'商城进度暂不可读取。';}
+  }
+
+  function renderShop(){
+    get('skin-balance').textContent=profile.balance.toLocaleString('zh-CN');
+    get('skin-top-balance').textContent=profile.balance.toLocaleString('zh-CN');
+    const skin=SKIN_CATALOG[selected];
+    const owned=!!profile.owned[selected];
+    const equipped=profile.equipped[skin.type]===selected;
+    for(const [id,button] of buttons){
+      const item=SKIN_CATALOG[id];
+      button.setAttribute('aria-pressed',String(id===selected));
+      button.querySelector('small').textContent=profile.equipped[item.type]===id?'已装备':profile.owned[id]?'已拥有':item.price+' 分';
+    }
+    get('skin-name').textContent=skin.name;
+    get('skin-tower').textContent=TOWERS[skin.type].name;
+    get('skin-description').textContent=skin.description;
+    const action=get('skin-action');
+    action.textContent=equipped?'已装备':owned?'装备皮肤':'兑换 · '+skin.price+' 分';
+    action.disabled=pending||!available||equipped||!owned&&profile.balance<skin.price;
+    get('skin-default').disabled=pending||!available||!equipped;
+    get('skin-original').setAttribute('aria-pressed',String(original));
+    get('skin-original').textContent=original?'查看皮肤':'对比原版';
+    get('skin-ascended').setAttribute('aria-pressed',String(ascended));
+    get('skin-ascended').textContent=ascended?'查看基础外观':'预览升阶';
+    get('skin-afford').textContent=!owned&&profile.balance<skin.price?'还需 '+(skin.price-profile.balance)+' 分':'';
+  }
+
+  async function change(action,id=selected){
+    if(pending)return;
+    pending=true;
+    renderShop();
+    try{
+      const {profile:updated}=await skinLedgerTransaction(connection(),current=>changeSkinOwnership(current,id,action));
+      accept(updated);
+      channel?.postMessage('updated');
+      status.textContent=action==='buy'?'兑换成功，现可装备。':action==='equip'?'已装备 '+SKIN_CATALOG[id].name+'。':'已恢复原版外观。';
+    }catch(error){status.textContent=error.message||'商城操作失败，请重试。';}
+    finally{pending=false;renderShop();}
+  }
+
+  function drawPreview(now){
+    if(!dialog.open)return;
+    const skin=SKIN_CATALOG[selected], age=(now-shot)/1000;
+    const x=102,y=104, kick=age>=0&&age<.24?6*(1-age/.24):0;
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    const stageLight=ctx.createRadialGradient(x,y,12,x,y,320);
+    stageLight.addColorStop(0,'#333b3b');
+    stageLight.addColorStop(1,'#141a20');
+    ctx.fillStyle=stageLight;
+    ctx.fillRect(0,0,canvas.width,canvas.height);
+    ctx.strokeStyle='#2d383b';
+    ctx.lineWidth=1;
+    ctx.beginPath();
+    for(let gx=0;gx<canvas.width;gx+=24){ctx.moveTo(gx,0);ctx.lineTo(gx,canvas.height);}
+    for(let gy=0;gy<canvas.height;gy+=24){ctx.moveTo(0,gy);ctx.lineTo(canvas.width,gy);}
+    ctx.stroke();
+    const angle=-.13;
+    const targets=skin.type==='storm'?[[278,80],[327,122],[292,153]]:[[309,76]];
+    for(const [tx,ty] of targets){
+      ctx.fillStyle='#374042';ctx.strokeStyle='#d0c6a3';ctx.beginPath();
+      ctx.arc(tx,ty,10,0,Math.PI*2);ctx.fill();ctx.stroke();
+    }
+    ctx.save();
+    ctx.translate(x,y);
+    ctx.scale(1.45,1.45);
+    drawTowerHardware(ctx,0,0,{type:skin.type,angle,ascended},kick,original?null:selected);
+    ctx.restore();
+    if(age>=0&&age<1.8){
+      function previewEffect(effect){
+        if(original)drawEffect(ctx,effect,true,null);
+        else drawCosmeticEffect(ctx,effect,true,selected);
+      }
+      if(age<.62)for(const [tx,ty] of targets){
+        previewEffect({kind:skin.type,x,y,tx,ty,sourceSlot:0,ascended,
+          color:TOWERS[skin.type].color,ttl:.62-age,max:.62,radius:36});
+      }
+      if(skin.type!=='storm'&&age>.18){
+        const [tx,ty]=targets[0];
+        const kind=skin.type==='gravity'?'gravity-field':'beam-impact';
+        previewEffect({kind,weapon:skin.type,x:tx,y:ty,radius:35,ascended,
+          color:TOWERS[skin.type].color,ttl:1.8-age,max:1.62});
+      }
+    }
+    raf=requestAnimationFrame(drawPreview);
+  }
+
+  for(const [id,skin] of Object.entries(SKIN_CATALOG)){
+    const button=document.createElement('button');
+    button.type='button';
+    button.className='skin-choice';
+    button.style.setProperty('--skin-accent',skin.accent);
+    const name=document.createElement('strong');
+    name.textContent=skin.name;
+    const price=document.createElement('small');
+    button.append(name,price);
+    button.addEventListener('click',()=>{
+      selected=id;original=false;shot=-Infinity;status.textContent='';renderShop();
+    });
+    get('skin-options').append(button);
+    buttons.set(id,button);
+  }
+
+  function open(){
+    if(dialog.open)return;
+    status.textContent='';
+    dialog.showModal();
+    renderShop();
+    refresh();
+    cancelAnimationFrame(raf);
+    raf=requestAnimationFrame(drawPreview);
+  }
+  get('open-skin-shop').addEventListener('click',open);
+  get('end-skin-shop').addEventListener('click',open);
+  get('close-skin-shop').addEventListener('click',()=>dialog.close());
+  dialog.addEventListener('close',()=>cancelAnimationFrame(raf));
+  get('skin-fire').addEventListener('click',()=>{shot=performance.now();});
+  get('skin-original').addEventListener('click',()=>{original=!original;shot=-Infinity;renderShop();});
+  get('skin-ascended').addEventListener('click',()=>{ascended=!ascended;renderShop();});
+  get('skin-default').addEventListener('click',()=>change('default'));
+  get('skin-action').addEventListener('click',()=>{
+    if(profile.owned[selected]){change('equip');return;}
+    const skin=SKIN_CATALOG[selected];
+    get('skin-confirm-detail').textContent='兑换 '+skin.name+' 将花费 '+skin.price+' 分，余额剩余 '+(profile.balance-skin.price)+' 分。';
+    confirm.returnValue='';
+    confirm.showModal();
+  });
+  confirm.addEventListener('close',()=>{
+    if(confirm.returnValue==='redeem')change('buy');
+  });
+  channel?.addEventListener('message',refresh);
+  window.addEventListener('focus',refresh);
+  renderShop();
+  refresh();
+
+  async function award(game){
+    const events=skinRewardEvents(game);
+    const won=game.phase==='won';
+    const settlement=get('end-skin-points');
+    const key=won?events[0]?.key:undefined;
+    settlementKey=key;
+    if(won){
+      const points=profile.claims[key];
+      settlement.textContent=!key?'':points?'本局战功积分 +'+points+' · 当前余额 '+profile.balance:'正在结算战功积分…';
+    }
+    const unsettled=events.filter(event=>!earnedEvents.has(event.key)&&!pendingEvents.has(event.key));
+    if(!unsettled.length)return;
+    for(const event of unsettled)pendingEvents.add(event.key);
+    try{
+      const {profile:updated,value}=await skinLedgerTransaction(connection(),current=>applySkinRewards(current,unsettled));
+      for(const event of unsettled)earnedEvents.add(event.key);
+      accept(updated);
+      if(value.earned)channel?.postMessage('updated');
+      if(won&&settlementKey===key)settlement.textContent='本局战功积分 +' + value.awarded + ' · 当前余额 ' + updated.balance;
+      else if(value.earned)status.textContent='无尽里程碑 · 战功积分 +' + value.earned;
+    }catch{
+      if(won&&settlementKey===key)settlement.textContent='积分暂未到账。打开商城后可重试结算。';
+    }finally{
+      for(const event of unsettled)pendingEvents.delete(event.key);
+    }
+  }
+  return {award,isOpen:()=>dialog.open};
+}
+
+
 const WIDTH = 900;
 const HEIGHT = 530;
 const firstRoutes = [
@@ -778,6 +1343,8 @@ class Game {
     this.lowHealthWarned=false;
     this.fortificationLevel=0;
     this.wave=0;
+    this.skinRunId=globalThis.crypto?.randomUUID?.()??Date.now().toString(36)+'-'+Math.random().toString(36).slice(2);
+    this.skinClearedWaves=0;
     this.kills=0;
     this.combatTime=0;
     this.legacyEndlessWave=false;
@@ -1407,6 +1974,7 @@ class Game {
       this.weather=null;
       for(const tower of this.towers)if(tower)tower.stunned=tower.webbed=tower.frozen=0;
       this.phase=this.wave===this.waveCount?'won':'between';
+      if(this.mode==='endless')this.skinClearedWaves++;
       if(this.mode==='operation'){
         if(this.phase==='between')this.captureOperationCheckpoint();
         else this.operationCheckpoint=null;
@@ -2078,7 +2646,8 @@ function artAscensionTurret(c,type,art){
   }
 }
 
-function drawTowerHardware(c,x,y,tower,kick=0){
+function drawTowerHardware(c,x,y,tower,kick=0,skin=towerSkinId(tower.type)){
+  if(skin&&drawCosmeticTower(c,x,y,tower,kick,skin))return;
   const {type,angle}=tower;
   const art=turretArt[type];
   let ascension;
@@ -2540,7 +3109,8 @@ function drawAim(ctx,{x,y},radius){
   ctx.restore();
 }
 
-function drawEffect(ctx,e,detailed=true){
+function drawEffect(ctx,e,detailed=true,skin=cosmeticEffectId(e)){
+  if(skin&&drawCosmeticEffect(ctx,e,detailed,skin))return;
   const fade=e.ttl/e.max,t=1-fade;
   const {kind,x,y,tx,ty}=e;
   ctx.save();ctx.globalAlpha=fade;ctx.lineCap='round';ctx.lineJoin='round';
@@ -2965,7 +3535,7 @@ const LIGHTNING_FADE_LEVELS=4;
 const MAX_LIGHTNING_PRIMARY=72;
 const MAX_LIGHTNING_BRANCHES=104;
 const MAX_COMBAT_SPARK_BURSTS=12;
-const isLightning=effect=>effect.kind==='tesla'||effect.kind==='storm';
+const isLightning=effect=>effect.kind==='tesla'||effect.kind==='storm'&&!cosmeticEffectId(effect);
 
 function drawLightningBatch(ctx,effects){
   const paths=Array.from({length:LIGHTNING_FADE_LEVELS*2},()=>null);
@@ -3145,6 +3715,7 @@ function storeProgress(storage,game,speed){
       version:saveVersion,speed,mode:game.mode,operationCheckpoint:game.operationCheckpoint,
       game:{
         ...pick(game,gameFields),
+        skinRunId:game.skinRunId,skinClearedWaves:game.skinClearedWaves,
         combatTime:game.combatTime,legacyEndlessWave:game.legacyEndlessWave,
         soloRaid:game.soloRaid,legacyFormation:game.legacyFormation,
         cardCooldowns:game.cardCooldowns,cardUses:game.cardUses,boostDamage:game.boostDamage,
@@ -3251,6 +3822,19 @@ function loadProgress(storage,mode='campaign'){
       game.gold+=420;
       game.lives=Math.min(game.maxLives,game.lives+6);
     }
+    // A previously completed victory stays ineligible. Old active runs start tracking here.
+    if(typeof state.skinRunId==='string'&&/^[a-z0-9-]{1,80}$/i.test(state.skinRunId)){
+      game.skinRunId=state.skinRunId;
+    }else if(game.phase==='won'){
+      game.skinRunId=null;
+    }else{
+      const raw=JSON.stringify(state);
+      let fingerprint=2166136261;
+      for(let i=0;i<raw.length;i++)fingerprint=Math.imul(fingerprint^raw.charCodeAt(i),16777619);
+      game.skinRunId='legacy-'+(fingerprint>>>0).toString(36)+'-'+raw.length;
+    }
+    const cleared=game.phase==='between'?game.wave:Math.max(0,game.wave-1);
+    game.skinClearedWaves=isInteger(state.skinClearedWaves,0,cleared)?state.skinClearedWaves:0;
     const map=game.map;
     if(!state.enemies.every(enemy=>validEnemy(enemy,wave?.lanes??0,map,olderSave)))return null;
     let retiredRefund=0;
@@ -3730,6 +4314,7 @@ function saveProgress(){
   records.consider(game);
   const status=storeProgress(progressStorage,game,speed)?'进度已保存':'自动存档不可用';
   if(el('save-status').textContent!==status)el('save-status').textContent=status;
+  skinShop.award(game);
 }
 
 function pauseForBackground(){
@@ -3891,6 +4476,12 @@ const shop = Object.entries(TOWERS).map(([type,spec],index)=>{
   el('shop').append(button);
   return [type,button];
 });
+
+const skinShop=setupSkinShop(()=>{
+  for(const [type,button] of shop)drawTowerPortrait(button.querySelector('canvas'),type);
+});
+el('open-skin-shop').addEventListener('click',()=>skinShop.award(game));
+el('end-skin-shop').addEventListener('click',()=>skinShop.award(game));
 
 const cardSymbols={cataclysm:'target',freeze:'frost',repair:'heart',overdrive:'tesla',barrage:'target',surge:'tesla'};
 const cardButtons=Object.entries(SKILLS).map(([key,skill])=>{
@@ -4578,6 +5169,9 @@ function sync(){
     }
   }
   if(game.finished&&!studyDialog.open&&!el('end-dialog').open){
+    el('end-skin-points').hidden=phase!=='won';
+    el('end-skin-shop').hidden=phase!=='won';
+    if(phase==='won')skinShop.award(game);
     el('end-label').textContent=phase==='won'?'VICTORY':'DEFEAT';
     el('end-title').textContent=phase==='won'?'防线守住了！':'要塞失守';
     el('end-mode').textContent={campaign:'进入雪地战役',snow:'进入无尽模式',endless:'返回战役',operation:'返回原版战役'}[mode];
@@ -4601,7 +5195,7 @@ function frame(now){
   previous=now;
   const before=game.wave;
   updateStudyCountdown(now);
-  if(!studyDialog.open&&!paused&&!document.hidden&&!el('reset-dialog').open&&!el('rank-dialog').open){
+  if(!studyDialog.open&&!paused&&!document.hidden&&!el('reset-dialog').open&&!el('rank-dialog').open&&!skinShop.isOpen()){
     const phase=game.phase;
     const towerHitRevision=game.towerHitRevision;
     const remainingSecond=Math.ceil(autoRemaining);
@@ -4641,6 +5235,7 @@ function restoredLabel(run,gravityCleanup=run.gravityCleanup){
 
 showStudyReminder();
 sync();
+skinShop.award(game);
 if(savedProgress)el('save-status').textContent=restoredLabel(savedProgress);
 else if(!progressStorage)el('save-status').textContent='自动存档不可用';
 requestAnimationFrame(frame);
@@ -4684,7 +5279,7 @@ requestAnimationFrame(frame);
     <div class="resource gold"><svg><use href="#coin"/></svg><div><span>当前黄金</span><strong id="gold">240</strong></div></div>
     <div class="resource wave"><svg><use href="#flag"/></svg><div><span>当前波次</span><strong id="header-wave">01</strong><small id="header-wave-total"> / 24</small></div></div>
   </div>
-  <button id="reset-top" class="icon-button" type="button" aria-label="重新开始" title="重新开始"><svg><use href="#reset"/></svg></button>
+  <div class="masthead-actions"><button id="open-skin-shop" type="button" class="speed-button">皮肤商城 <span id="skin-top-balance">0</span></button><button id="reset-top" class="icon-button" type="button" aria-label="重新开始" title="重新开始"><svg><use href="#reset"/></svg></button></div>
 </header>
 
 <main class="layout">
@@ -4790,6 +5385,8 @@ requestAnimationFrame(frame);
   <div class="dialog-icon"><svg><use href="#crest"/></svg></div>
   <div id="end-label" class="eyebrow"></div><h2 id="end-title"></h2><p id="end-detail"></p>
   <div id="end-stats" class="end-stats"></div>
+  <p id="end-skin-points" role="status"></p>
+  <button id="end-skin-shop" class="speed-button" type="button">前往皮肤商城</button>
   <button id="end-rank" class="speed-button end-mode" type="button">个人纪录与排行榜</button>
   <button id="end-mode" class="speed-button end-mode" type="button">进入无尽模式</button>
   <button id="end-checkpoint" class="speed-button end-mode" type="button" hidden></button>
@@ -4828,5 +5425,42 @@ requestAnimationFrame(frame);
     <p id="rank-submit-status" class="rank-status" role="status"></p>
   </form>
 </dialog>
+
+<dialog id="skin-shop" class="skin-dialog" aria-labelledby="skin-title">
+  <header class="skin-header">
+    <div><h2 id="skin-title">皮肤商城</h2><p>战功积分 <strong id="skin-balance">0</strong></p></div>
+    <button id="close-skin-shop" type="button" class="icon-button" aria-label="关闭皮肤商城">×</button>
+  </header>
+  <div id="skin-options" class="skin-options" role="group" aria-label="炮塔皮肤"></div>
+  <div class="skin-detail"><div><small id="skin-tower"></small><h3 id="skin-name"></h3></div><p id="skin-description"></p></div>
+  <canvas id="skin-preview" width="380" height="188" role="img" aria-label="炮塔皮肤与试射预览"></canvas>
+  <div class="skin-preview-actions">
+    <button id="skin-fire" type="button" class="speed-button">试射</button>
+    <button id="skin-original" type="button" class="speed-button">对比原版</button>
+    <button id="skin-ascended" type="button" class="speed-button">预览升阶</button>
+  </div>
+  <div class="skin-purchase-actions">
+    <button id="skin-action" type="button" class="primary">兑换</button>
+    <button id="skin-default" type="button" class="speed-button">恢复原版</button>
+    <small id="skin-afford"></small>
+  </div>
+  <p id="skin-status" role="status"></p>
+  <details class="skin-rules"><summary>积分获取与存档</summary>
+    <ul>
+      <li>原版战役首通 180 分，再通关 45 分。</li>
+      <li>雪地战役首通 240 分，再通关 60 分。</li>
+      <li>关卡挑战完成第 24 关，首通 150 分，再通关 35 分。</li>
+      <li>无尽单局实打 100、200、400 波分别奖励 60、100、160 分，每档限领一次。跳过的波次不计入。</li>
+    </ul>
+    <p>积分、皮肤和装备保存在当前网址的浏览器中。皮肤只改变外观。</p>
+  </details>
+</dialog>
+<dialog id="skin-confirm" class="skin-dialog skin-confirm" aria-labelledby="skin-confirm-title">
+  <h2 id="skin-confirm-title">确认兑换</h2><p id="skin-confirm-detail"></p>
+  <form method="dialog" class="skin-purchase-actions">
+    <button value="cancel" class="speed-button">取消</button><button value="redeem" class="primary">确认兑换</button>
+  </form>
+</dialog>
+
 </body>
 </html>
